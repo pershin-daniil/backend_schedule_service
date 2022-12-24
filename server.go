@@ -18,7 +18,10 @@ func timeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println(time.Now())
+	_, err := fmt.Fprintf(w, "%s\n", time.Now())
+	if err != nil {
+		log.Panic(err)
+	}
 }
 
 func main() {
