@@ -1,27 +1,34 @@
 package rest
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	"github.com/sirupsen/logrus"
 )
 
-type Handler struct {
-	log       *logrus.Entry
-	address   string
-	version   string
-	stateTime []time.Time
+type App interface {
+	GetUsers(ctx context.Context) ([]models.User, error)
 }
 
-func NewHandler(log *logrus.Logger, address, version string) *Handler {
+type Handler struct {
+	log     *logrus.Entry
+	address string
+	version string
+	app     App
+}
+
+func NewHandler(log *logrus.Logger, app App, address, version string) *Handler {
 	h := Handler{
 		log:     log.WithField("component", "rest"),
 		address: address,
 		version: version,
+		app:     app,
 	}
 	return &h
 }
@@ -31,9 +38,7 @@ func (h *Handler) Run() error {
 	r.Get("/version", h.versionHandler)
 	r.Route("/api", func(r chi.Router) {
 		r.Route("/v1", func(r chi.Router) {
-			r.Get("/timeNow", h.timeHandler)
-			r.Get("/timeHistory", h.timeHistoryHandler)
-			r.Get("/resetTimeHistory", h.resetTimeHistoryHandler)
+			r.Get("/getUsers", h.getUsersHandler)
 		})
 	})
 
@@ -44,65 +49,23 @@ func (h *Handler) Run() error {
 }
 
 func (h *Handler) versionHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/version" {
-		http.Error(w, "404 not found.", http.StatusNotFound)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	_, err := fmt.Fprintf(w, "%s\n", h.version)
 	if err != nil {
 		h.log.Warnf("err during writing to connection: %v", err)
 	}
 }
 
-func (h *Handler) timeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/api/v1/timeNow" {
-		http.Error(w, "404 not found.", http.StatusNotFound)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not allowed.", http.StatusMethodNotAllowed)
-		return
-	}
-	h.stateTime = append(h.stateTime, time.Now())
-	h.log.Debug("User requested current time")
-	_, err := fmt.Fprintf(w, "%s\n", h.stateTime[len(h.stateTime)-1])
+func (h *Handler) getUsersHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	users, err := h.app.GetUsers(ctx)
 	if err != nil {
-		h.log.Panic(err)
-	}
-}
-
-func (h *Handler) timeHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/api/v1/timeHistory" {
-		http.Error(w, "404 not found.", http.StatusNotFound)
+		h.log.Warnf("err during getting users: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not allowed.", http.StatusMethodNotAllowed)
+	if err = json.NewEncoder(w).Encode(users); err != nil {
+		h.log.Warnf("err during encoding users: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	h.log.Debug("User requested time history")
-	_, err := fmt.Fprintf(w, "%v\n", h.stateTime)
-	if err != nil {
-		h.log.Panic(err)
-	}
-}
-
-func (h *Handler) resetTimeHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/api/v1/resetTimeHistory" {
-		http.Error(w, "404 not found.", http.StatusNotFound)
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not allowed.", http.StatusMethodNotAllowed)
-		return
-	}
-	h.log.Debug("User requested to reset time history")
-	_, err := fmt.Fprintf(w, "%v\n", h.stateTime)
-	if err != nil {
-		h.log.Panic(err)
-	}
-	h.stateTime = h.stateTime[:0]
 }

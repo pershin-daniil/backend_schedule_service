@@ -108,8 +108,8 @@ linters:
     - prealloc
     - predeclared
     - revive
-    - rowserrcheck
-    - sqlclosecheck
+#    - rowserrcheck
+#    - sqlclosecheck
     - staticcheck
     - stylecheck
     - tagliatelle
@@ -119,5 +119,5 @@ linters:
     - typecheck
     - unconvert
     - unused
-    - wastedassign
+#    - wastedassign
     - whitespace
