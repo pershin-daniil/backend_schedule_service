@@ -57,3 +57,22 @@ func (s *Store) GetUsersSQL(ctx context.Context) ([]models.User, error) {
 	}
 	return users, nil
 }
+
+func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {
+	var result models.User
+	query := `
+INSERT INTO users (last_name, first_name, phone_number)
+ VALUES ($1, $2, $3)
+  RETURNING id, last_name, first_name, phone_number`
+	err := s.db.QueryRowContext(ctx, query, user.LastName, user.FirstName, user.PhoneNumber).
+		Scan(&result.ID, &result.LastName, &result.FirstName, &result.PhoneNumber)
+	if err != nil {
+		return models.User{}, err
+	}
+	return user, nil
+}
+
+func (s *Store) TruncateTable(ctx context.Context, table string) error {
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE `+table)
+	return err
+}
