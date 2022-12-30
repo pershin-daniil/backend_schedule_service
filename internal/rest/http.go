@@ -40,7 +40,7 @@ func (h *Handler) Run() error {
 	r.Route("/api", func(r chi.Router) {
 		r.Route("/v1", func(r chi.Router) {
 			r.Get("/getUsers", h.getUsersHandler)
-			r.Get("/createUser", h.createUserHandler)
+			r.Post("/createUser", h.createUserHandler)
 		})
 	})
 
