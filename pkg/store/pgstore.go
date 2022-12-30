@@ -3,10 +3,9 @@ package store
 import (
 	"context"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	"github.com/sirupsen/logrus"
-
-	"github.com/jmoiron/sqlx"
 )
 
 type Store struct {
@@ -56,4 +55,17 @@ func (s *Store) GetUsersSQL(ctx context.Context) ([]models.User, error) {
 		return nil, err
 	}
 	return users, nil
+}
+func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {
+	var result models.User
+	query := `
+INSERT INTO users (last_name, first_name, phone_number)
+ VALUES ($1, $2, $3)
+  RETURNING id, last_name, first_name, phone_number`
+	err := s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.PhoneNumber).
+		Scan(&result.ID, &result.LastName, &result.FirstName, &result.PhoneNumber)
+	if err != nil {
+		return models.User{}, err
+	}
+	return user, nil
 }
