@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/suite"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -49,10 +50,17 @@ func (s *IntegrationTestSuite) SetupTest() {
 	s.Require().NoError(err)
 }
 
+func (s *IntegrationTestSuite) createUser(ctx context.Context, user models.User) int {
+	s.T().Helper()
+	result := models.User{}
+	resp := s.sendRequest(ctx, http.MethodPost, "/api/v1/users", user, &result)
+	s.Require().Equal(http.StatusCreated, resp.StatusCode)
+	return result.ID
+}
+
 func (s *IntegrationTestSuite) TestCreateUser() {
 	ctx := context.Background()
 	user := models.User{
-		ID:        3,
 		LastName:  "TestLN",
 		FirstName: "TestFN",
 	}
@@ -73,6 +81,63 @@ func (s *IntegrationTestSuite) TestCreateUser() {
 	s.Require().NoError(err)
 	s.Require().Equal(user.LastName, respUser.LastName)
 	s.Require().Equal(user.FirstName, respUser.FirstName)
+}
+
+func (s *IntegrationTestSuite) TestGetUser() {
+	ctx := context.Background()
+	user := models.User{
+		LastName:  "TestLN",
+		FirstName: "TestFN",
+	}
+	id := s.createUser(ctx, user)
+	s.Run("get user", func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		var respUser models.User
+		err = json.NewDecoder(resp.Body).Decode(&respUser)
+		s.Require().NoError(err)
+		s.Require().Equal(user.LastName, respUser.LastName)
+		s.Require().Equal(user.FirstName, respUser.FirstName)
+	})
+
+	s.Run("get user not found", func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/0", nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, url string, body interface{}, dest interface{}) *http.Response {
+	s.T().Helper()
+	reqBody, err := json.Marshal(body)
+	s.Require().NoError(err)
+	req, err := http.NewRequestWithContext(ctx, method, testURL+url, bytes.NewReader(reqBody))
+	s.Require().NoError(err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	defer func() {
+		err = resp.Body.Close()
+		s.Require().NoError(err)
+	}()
+	if dest != nil {
+		err = json.NewDecoder(resp.Body).Decode(&dest)
+		s.Require().NoError(err)
+	}
+	return resp
 }
 
 func TestIntegrationTestSuite(t *testing.T) {

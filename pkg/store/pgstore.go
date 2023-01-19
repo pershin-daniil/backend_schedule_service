@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/jmoiron/sqlx"
@@ -13,6 +16,10 @@ type Store struct {
 	log *logrus.Entry
 	db  *sqlx.DB
 }
+
+var ErrUserNotFound = errors.New("user not found")
+
+//TODO all validations to handlers
 
 func NewStore(log *logrus.Logger, dsn string) (*Store, error) {
 	db, err := sqlx.Connect("pgx", dsn)
@@ -44,39 +51,35 @@ INSERT INTO users (last_name, first_name)
 	if err != nil {
 		return models.User{}, err
 	}
-	return user, nil
+	return result, nil
 }
 
-func (s *Store) ReadUser(ctx context.Context, id string) ([]models.User, error) {
-	var user []models.User
-	idInt, err := strconv.Atoi(id)
-	if err != nil {
-		return nil, err
-	}
+func (s *Store) GetUser(ctx context.Context, id int) (models.User, error) {
+	var user models.User
 	query := `
 SELECT * FROM users
 WHERE user_id = $1
 `
-	err = s.db.SelectContext(ctx, &user, query, idInt)
-	if err != nil {
-		return nil, err
+	err := s.db.GetContext(ctx, &user, query, id)
+	switch {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		return models.User{}, ErrUserNotFound
+	default:
+		return models.User{}, fmt.Errorf("err getting user %d: %w", id, err)
 	}
 	return user, nil
 }
 
-func (s *Store) UpdateUser(ctx context.Context, id string, user models.User) ([]models.User, error) {
+func (s *Store) UpdateUser(ctx context.Context, id int, user models.User) ([]models.User, error) {
 	var result []models.User
-	idInt, err := strconv.Atoi(id)
-	if err != nil {
-		return nil, err
-	}
 	query := `
 UPDATE users
     SET last_name = $2,
     first_name = $3
 WHERE user_id = $1
 RETURNING *`
-	err = s.db.SelectContext(ctx, &result, query, idInt, user.LastName, user.FirstName)
+	err := s.db.SelectContext(ctx, &result, query, id, user.LastName, user.FirstName)
 	if err != nil {
 		return nil, err
 	}
