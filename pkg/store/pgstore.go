@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -23,7 +24,6 @@ func NewStore(log *logrus.Logger, dsn string) (*Store, error) {
 		db:  db,
 	}, nil
 }
-
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	var users []models.User
 	err := s.db.SelectContext(ctx, &users, `SELECT * FROM users`)
@@ -33,39 +33,72 @@ func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	return users, nil
 }
 
-func (s *Store) GetUsersSQL(ctx context.Context) ([]models.User, error) {
-	var users []models.User
-	var tmp models.User
-	rows, err := s.db.QueryContext(ctx, `SELECT * FROM users`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err = rows.Close(); err != nil {
-			s.log.Warnf("err during closing rows: %v", err)
-		}
-	}()
-	for rows.Next() {
-		if err = rows.Scan(&tmp.ID, &tmp.LastName, &tmp.FirstName, &tmp.PhoneNumber); err != nil {
-			return nil, err
-		}
-		users = append(users, tmp)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	return users, nil
-}
 func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {
 	var result models.User
 	query := `
-INSERT INTO users (last_name, first_name, phone_number)
- VALUES ($1, $2, $3)
-  RETURNING id, last_name, first_name, phone_number`
-	err := s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.PhoneNumber).
-		Scan(&result.ID, &result.LastName, &result.FirstName, &result.PhoneNumber)
+INSERT INTO users (last_name, first_name)
+ VALUES ($1, $2)
+  RETURNING user_id, last_name, first_name`
+	err := s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName).
+		Scan(&result.ID, &result.LastName, &result.FirstName)
 	if err != nil {
 		return models.User{}, err
 	}
 	return user, nil
+}
+
+func (s *Store) ReadUser(ctx context.Context, id string) ([]models.User, error) {
+	var user []models.User
+	idInt, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+SELECT * FROM users
+WHERE user_id = $1
+`
+	err = s.db.SelectContext(ctx, &user, query, idInt)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *Store) UpdateUser(ctx context.Context, id string, user models.User) ([]models.User, error) {
+	var result []models.User
+	idInt, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+UPDATE users
+    SET last_name = $2,
+    first_name = $3
+WHERE user_id = $1
+RETURNING *`
+	err = s.db.SelectContext(ctx, &result, query, idInt, user.LastName, user.FirstName)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Store) DeleteUser(ctx context.Context, id string) ([]models.User, error) {
+	var deletedUser []models.User
+	idInt, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+DELETE FROM users
+WHERE user_id = $1
+RETURNING *;
+`
+	err = s.db.SelectContext(ctx, &deletedUser, query, idInt)
+	return deletedUser, err
+}
+
+func (s *Store) TruncateTable(ctx context.Context, table string) error {
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE `+table)
+	return err
 }
