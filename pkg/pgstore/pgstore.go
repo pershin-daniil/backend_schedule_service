@@ -1,14 +1,22 @@
-package store
+package pgstore
 
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
+	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 )
+
+//go:embed migrations
+var migrations embed.FS
+
+const retries = 3
 
 type Store struct {
 	log *logrus.Entry
@@ -17,8 +25,8 @@ type Store struct {
 
 var ErrUserNotFound = errors.New("user not found")
 
-func NewStore(log *logrus.Logger, dsn string) (*Store, error) {
-	db, err := sqlx.Connect("pgx", dsn)
+func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
+	db, err := sqlx.ConnectContext(ctx, "pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -27,13 +35,41 @@ func NewStore(log *logrus.Logger, dsn string) (*Store, error) {
 		db:  db,
 	}, nil
 }
+
+func (s *Store) Migrate(direction migrate.MigrationDirection) error {
+	assetDir := func() func(string) ([]string, error) {
+		return func(path string) ([]string, error) {
+			dirEntry, er := migrations.ReadDir(path)
+			if er != nil {
+				return nil, er
+			}
+			entries := make([]string, 0)
+			for _, e := range dirEntry {
+				entries = append(entries, e.Name())
+			}
+
+			return entries, nil
+		}
+	}()
+	asset := migrate.AssetMigrationSource{
+		Asset:    migrations.ReadFile,
+		AssetDir: assetDir,
+		Dir:      "migrations",
+	}
+	_, err := migrate.Exec(s.db.DB, "postgres", asset, direction)
+	return err
+}
+
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	var users []models.User
-	err := s.db.SelectContext(ctx, &users, `SELECT * FROM users`)
-	if err != nil {
-		return nil, err
+	var err error
+	for i := 0; i < retries; i++ {
+		if err = s.db.SelectContext(ctx, &users, `SELECT * FROM users`); err != nil {
+			continue
+		}
+		return users, nil
 	}
-	return users, nil
+	return nil, err
 }
 
 func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {

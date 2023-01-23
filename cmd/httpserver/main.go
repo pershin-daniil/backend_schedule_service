@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pershin-daniil/TimeSlots/internal/rest"
 	"github.com/pershin-daniil/TimeSlots/pkg/logger"
-	"github.com/pershin-daniil/TimeSlots/pkg/store"
+	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
+	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
+	"github.com/pershin-daniil/TimeSlots/pkg/service"
+	migrate "github.com/rubenv/sql-migrate"
 )
 
 const (
@@ -18,14 +24,31 @@ var pgDSN = lookupEnv("PG_DSN", "postgres://postgres:secret@localhost:6431/times
 
 func main() {
 	log := logger.NewLogger()
-	app, err := store.NewStore(log, pgDSN)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := pgstore.NewStore(ctx, log, pgDSN)
 	if err != nil {
 		log.Panic(err)
 	}
-	handler := rest.NewHandler(log, app, address, version)
-	if err := handler.Run(); err != nil {
+	if err = store.Migrate(migrate.Up); err != nil {
 		log.Panic(err)
 	}
+	dummy := notifier.NewDummyNotifier(log)
+	app := service.NewScheduleService(log, store, dummy)
+	server := rest.NewServer(log, app, address, version)
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+		<-sigCh
+		log.Info("Received signal, shutting down...")
+		cancel()
+		server.Shutdown()
+	}()
+	if err = server.Run(); err != nil {
+		log.Panic(err)
+	}
+	log.Info("Server stopped")
 }
 
 func lookupEnv(key, defaultValue string) string {
