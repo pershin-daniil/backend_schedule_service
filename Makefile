@@ -12,5 +12,5 @@ start:
 get:
 	curl 'http://0.0.0.0:8080/api/v1/users'
 
-test:
-	go test ./tests/users_test.go
+test: up
+	go test -v ./tests/users_test.go
