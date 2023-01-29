@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pershin-daniil/TimeSlots/internal/rest"
 	"github.com/pershin-daniil/TimeSlots/pkg/logger"
-	"github.com/pershin-daniil/TimeSlots/pkg/store"
+	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
+	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
+	"github.com/pershin-daniil/TimeSlots/pkg/service"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/suite"
 	"net/http"
@@ -30,25 +33,41 @@ var user = models.User{
 	FirstName: "Ivan",
 }
 
+var meeting = models.Meeting{
+	Manager:   0,
+	StartTime: 1000,
+	EndTime:   1100,
+	Client:    0,
+}
+
+type errResp struct {
+	Err string `json:"error"`
+}
+
 type IntegrationTestSuite struct {
 	suite.Suite
-	log     *logrus.Logger
-	app     *store.Store
-	handler *rest.Handler
+	log      *logrus.Logger
+	store    service.Store
+	notifier service.Notifier
+	app      rest.App
+	handler  *rest.Server
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
 	s.log = logger.NewLogger()
 	var err error
-	s.app, err = store.NewStore(s.log, pgDSN)
+	ctx := context.Background()
+	s.store, err = pgstore.NewStore(ctx, s.log, pgDSN)
+	s.notifier = notifier.NewDummyNotifier(s.log)
+	s.app = service.NewScheduleService(s.log, s.store, s.notifier)
 	s.Require().NoError(err)
-	s.handler = rest.NewHandler(s.log, s.app, address, version)
+
+	s.handler = rest.NewServer(s.log, s.app, address, version)
 	go func() {
 		_ = s.handler.Run()
 	}()
 	time.Sleep(100 * time.Millisecond)
-	ctx := context.Background()
-	err = s.app.TruncateTable(ctx, "users")
+	err = s.store.ResetTables(ctx, []string{"meetings", "users"})
 	s.Require().NoError(err)
 }
 
@@ -72,6 +91,14 @@ func (s *IntegrationTestSuite) deleteUser(ctx context.Context, id int) models.Us
 	resp := s.sendRequest(ctx, http.MethodDelete, "/api/v1/users/"+strconv.Itoa(id), nil, &result)
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 	return result
+}
+
+func (s *IntegrationTestSuite) createMeeting(ctx context.Context, meeting models.Meeting) int {
+	s.T().Helper()
+	result := models.Meeting{}
+	resp := s.sendRequest(ctx, http.MethodPost, "/api/v1/meetings", meeting, &result)
+	s.Require().Equal(http.StatusCreated, resp.StatusCode)
+	return result.ID
 }
 
 func (s *IntegrationTestSuite) TestCreateUser() {
@@ -118,7 +145,8 @@ func (s *IntegrationTestSuite) TestGetUser() {
 		s.Require().Equal(user.FirstName, respUser.FirstName)
 	})
 	s.Run("get user not found", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/0", nil)
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
 		s.Require().NoError(err)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
@@ -127,6 +155,10 @@ func (s *IntegrationTestSuite) TestGetUser() {
 			s.Require().NoError(err)
 		}()
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err getting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
 	})
 }
 
@@ -134,7 +166,7 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 	ctx := context.Background()
 	data := models.User{
 		LastName:  "Updated",
-		FirstName: "Booop!",
+		FirstName: "Boop!",
 	}
 	id := s.createUser(ctx, user)
 	reqBody, err := json.Marshal(data)
@@ -157,7 +189,8 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 		s.Require().Equal(data.FirstName, respUser.FirstName)
 	})
 	s.Run("update user not found", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/0", bytes.NewReader(reqBody))
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(id), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
@@ -166,6 +199,10 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 			s.Require().NoError(err)
 		}()
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err updating user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
 	})
 }
 
@@ -191,7 +228,8 @@ func (s *IntegrationTestSuite) TestDeleteUser() {
 		s.Require().Equal(user.LastName, respUser.LastName)
 	})
 	s.Run("delete user not found", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/0", nil)
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
 		s.Require().NoError(err)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
@@ -200,6 +238,166 @@ func (s *IntegrationTestSuite) TestDeleteUser() {
 			s.Require().NoError(err)
 		}()
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err deleting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
+	})
+}
+
+func (s *IntegrationTestSuite) TestCreateMeeting() {
+	ctx := context.Background()
+	id1 := s.createUser(ctx, user)
+	id2 := s.createUser(ctx, user)
+	meeting.Manager = id1
+	meeting.Client = id2
+	s.Run("create meeting"+strconv.Itoa(id1)+strconv.Itoa(id2), func() {
+		reqBody, err := json.Marshal(meeting)
+		s.Require().NoError(err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL+"/api/v1/meetings", bytes.NewReader(reqBody))
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusCreated, resp.StatusCode)
+		var respMeeting models.Meeting
+		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
+		s.Require().NoError(err)
+		s.Require().Equal(meeting.Manager, respMeeting.Manager)
+		s.Require().Equal(meeting.Client, respMeeting.Client)
+		s.Require().Equal(meeting.StartTime, respMeeting.StartTime)
+		s.Require().Equal(meeting.EndTime, respMeeting.EndTime)
+	})
+}
+
+func (s *IntegrationTestSuite) TestGetMeeting() {
+	ctx := context.Background()
+	id := s.createMeeting(ctx, meeting)
+	s.Run("get meeting", func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/meetings/"+strconv.Itoa(id), nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		var respMeeting models.Meeting
+		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
+		s.Require().NoError(err)
+		s.Require().Equal(id, respMeeting.ID)
+		s.Require().Equal(meeting.Manager, respMeeting.Manager)
+		s.Require().Equal(meeting.Client, respMeeting.Client)
+		s.Require().Equal(meeting.StartTime, respMeeting.StartTime)
+		s.Require().Equal(meeting.EndTime, respMeeting.EndTime)
+	})
+	s.Run("not found meeting", func() {
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/meetings/0", nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err getting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
+	})
+}
+
+func (s *IntegrationTestSuite) TestUpdateMeeting() {
+	ctx := context.Background()
+	data := models.Meeting{
+		Manager:   2,
+		StartTime: 1200,
+		EndTime:   2400,
+		Client:    1,
+	}
+	id := s.createMeeting(ctx, meeting)
+	reqBody, err := json.Marshal(data)
+	s.Require().NoError(err)
+	s.Run("update meeting", func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/"+strconv.Itoa(id), bytes.NewReader(reqBody))
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		var respMeeting models.Meeting
+		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
+		s.Require().NoError(err)
+		s.Require().Equal(id, respMeeting.ID)
+		s.Require().Equal(data.Manager, respMeeting.Manager)
+		s.Require().Equal(data.Client, respMeeting.Client)
+		s.Require().Equal(data.StartTime, respMeeting.StartTime)
+		s.Require().Equal(data.EndTime, respMeeting.EndTime)
+	})
+	s.Run("not found meeting", func() {
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/0", bytes.NewReader(reqBody))
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err updating meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
+	})
+}
+
+func (s *IntegrationTestSuite) TestDeleteMeeting() {
+	ctx := context.Background()
+	id := s.createMeeting(ctx, meeting)
+	s.Run("delete meeting", func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/"+strconv.Itoa(id), nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		var respMeeting models.Meeting
+		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
+		s.Require().NoError(err)
+		s.Require().Equal(id, respMeeting.ID)
+		s.Require().Equal(meeting.Manager, respMeeting.Manager)
+		s.Require().Equal(meeting.Client, respMeeting.Client)
+		s.Require().Equal(meeting.StartTime, respMeeting.StartTime)
+		s.Require().Equal(meeting.EndTime, respMeeting.EndTime)
+	})
+	s.Run("not found meeting", func() {
+		id = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/0", nil)
+		s.Require().NoError(err)
+		resp, err := http.DefaultClient.Do(req)
+		s.Require().NoError(err)
+		defer func() {
+			err = resp.Body.Close()
+			s.Require().NoError(err)
+		}()
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		var respError errResp
+		err = json.NewDecoder(resp.Body).Decode(&respError)
+		s.Require().NoError(err)
+		s.Require().Equal(fmt.Sprintf("err deleting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
 	})
 }
 
