@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	"github.com/sirupsen/logrus"
 )
@@ -13,9 +14,9 @@ type Notifier interface {
 
 type Store interface {
 	GetUsers(ctx context.Context) ([]models.User, error)
-	CreateUser(ctx context.Context, user models.User) (models.User, error)
+	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
 	GetUser(ctx context.Context, id int) (models.User, error)
-	UpdateUser(ctx context.Context, id int, user models.User) (models.User, error)
+	UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error)
 	DeleteUser(ctx context.Context, id int) (models.User, error)
 	ResetTables(ctx context.Context, table []string) error
 	GetMeetings(ctx context.Context) ([]models.Meeting, error)
@@ -31,15 +32,15 @@ type ScheduleService struct {
 	notifier Notifier
 }
 
-func (s *ScheduleService) CreateUser(ctx context.Context, user models.User) (models.User, error) {
-	user, err := s.store.CreateUser(ctx, user)
+func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
+	newUser, err := s.store.CreateUser(ctx, user)
 	if err != nil {
 		return models.User{}, fmt.Errorf("err creating user: %w", err)
 	}
 	if err = s.notifier.Notify(ctx, "user created", user.ID); err != nil {
 		s.log.Errorf("err notifying user: %v", err)
 	}
-	return user, nil
+	return newUser, nil
 }
 
 func NewScheduleService(log *logrus.Logger, store Store, notifier Notifier) *ScheduleService {
@@ -70,7 +71,7 @@ func (s *ScheduleService) GetUser(ctx context.Context, id int) (models.User, err
 	return user, nil
 }
 
-func (s *ScheduleService) UpdateUser(ctx context.Context, id int, user models.User) (models.User, error) {
+func (s *ScheduleService) UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error) {
 	updatedUser, err := s.store.UpdateUser(ctx, id, user)
 	if err != nil {
 		return models.User{}, fmt.Errorf("err updating user (id %d) from store: %w", id, err)

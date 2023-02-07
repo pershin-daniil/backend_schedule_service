@@ -5,6 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
+	"testing"
+	"time"
+
+	migrate "github.com/rubenv/sql-migrate"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pershin-daniil/TimeSlots/internal/rest"
 	"github.com/pershin-daniil/TimeSlots/pkg/logger"
@@ -13,10 +20,6 @@ import (
 	"github.com/pershin-daniil/TimeSlots/pkg/service"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/suite"
-	"net/http"
-	"strconv"
-	"testing"
-	"time"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 )
@@ -28,26 +31,20 @@ const (
 	pgDSN   = "postgres://postgres:secret@localhost:6431/timeslots?sslmode=disable"
 )
 
-var user = models.User{
-	LastName:  "Ivanov",
-	FirstName: "Ivan",
-}
+var user models.UserRequest
 
-var meeting = models.Meeting{
-	Manager:   0,
-	StartTime: 1000,
-	EndTime:   1100,
-	Client:    0,
-}
+var mscLocation *time.Location
+
+var meeting models.Meeting
 
 type errResp struct {
-	Err string `json:"error"`
+	Error string `json:"error"`
 }
 
 type IntegrationTestSuite struct {
 	suite.Suite
 	log      *logrus.Logger
-	store    service.Store
+	store    *pgstore.Store
 	notifier service.Notifier
 	app      rest.App
 	handler  *rest.Server
@@ -56,28 +53,52 @@ type IntegrationTestSuite struct {
 func (s *IntegrationTestSuite) SetupSuite() {
 	s.log = logger.NewLogger()
 	var err error
+
+	var (
+		LastName  = "Ivanov"
+		FirstName = "Ivan"
+		userPhone = "+7 999 999 99 99"
+	)
+	user = models.UserRequest{
+		LastName:  &LastName,
+		FirstName: &FirstName,
+		Phone:     &userPhone,
+	}
+
+	mscLocation, err = time.LoadLocation("Europe/Moscow")
+	meeting = models.Meeting{
+		Manager:   0,
+		StartTime: time.Date(2023, 1, 1, 10, 0, 0, 0, mscLocation),
+		EndTime:   time.Date(2023, 1, 1, 11, 0, 0, 0, mscLocation),
+		Client:    0,
+	}
+
+	s.Require().NoError(err)
 	ctx := context.Background()
 	s.store, err = pgstore.NewStore(ctx, s.log, pgDSN)
+	s.Require().NoError(err)
+	err = s.store.Migrate(migrate.Up)
+	s.Require().NoError(err)
 	s.notifier = notifier.NewDummyNotifier(s.log)
 	s.app = service.NewScheduleService(s.log, s.store, s.notifier)
-	s.Require().NoError(err)
 
 	s.handler = rest.NewServer(s.log, s.app, address, version)
 	go func() {
 		_ = s.handler.Run()
 	}()
 	time.Sleep(100 * time.Millisecond)
-	err = s.store.ResetTables(ctx, []string{"meetings", "users"})
+	err = s.store.ResetTables(ctx, []string{"meetings", "users", "users_history"})
 	s.Require().NoError(err)
 }
 
-func (s *IntegrationTestSuite) createUser(ctx context.Context, user models.User) int {
+func (s *IntegrationTestSuite) createUser(ctx context.Context, user models.UserRequest) int {
 	s.T().Helper()
 	result := models.User{}
 	resp := s.sendRequest(ctx, http.MethodPost, "/api/v1/users", user, &result)
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
 	return result.ID
 }
+
 func (s *IntegrationTestSuite) updateUser(ctx context.Context, data models.User, id int) models.User {
 	s.T().Helper()
 	result := models.User{}
@@ -85,6 +106,7 @@ func (s *IntegrationTestSuite) updateUser(ctx context.Context, data models.User,
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 	return result
 }
+
 func (s *IntegrationTestSuite) deleteUser(ctx context.Context, id int) models.User {
 	s.T().Helper()
 	result := models.User{}
@@ -119,8 +141,12 @@ func (s *IntegrationTestSuite) TestCreateUser() {
 		var respUser models.User
 		err = json.NewDecoder(resp.Body).Decode(&respUser)
 		s.Require().NoError(err)
-		s.Require().Equal(user.LastName, respUser.LastName)
-		s.Require().Equal(user.FirstName, respUser.FirstName)
+		s.Require().Equal(*user.LastName, respUser.LastName)
+		s.Require().Equal(*user.FirstName, respUser.FirstName)
+		var cnt int
+		err = s.store.QueryRow(ctx, `SELECT count(*) FROM users_history WHERE user_id = $1`, respUser.ID).Scan(&cnt)
+		s.Require().NoError(err)
+		s.Require().Equal(1, cnt)
 	})
 }
 
@@ -158,7 +184,7 @@ func (s *IntegrationTestSuite) TestGetUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err getting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err getting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
@@ -167,6 +193,7 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 	data := models.User{
 		LastName:  "Updated",
 		FirstName: "Boop!",
+		Phone:     "jopa",
 	}
 	id := s.createUser(ctx, user)
 	reqBody, err := json.Marshal(data)
@@ -188,6 +215,7 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 		s.Require().Equal(data.LastName, respUser.LastName)
 		s.Require().Equal(data.FirstName, respUser.FirstName)
 	})
+
 	s.Run("update user not found", func() {
 		id = 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(id), bytes.NewReader(reqBody))
@@ -202,7 +230,7 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err updating user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err updating user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
@@ -241,7 +269,7 @@ func (s *IntegrationTestSuite) TestDeleteUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err deleting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err deleting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
@@ -251,7 +279,7 @@ func (s *IntegrationTestSuite) TestCreateMeeting() {
 	id2 := s.createUser(ctx, user)
 	meeting.Manager = id1
 	meeting.Client = id2
-	s.Run("create meeting"+strconv.Itoa(id1)+strconv.Itoa(id2), func() {
+	s.Run(fmt.Sprintf("create meeting id1: %d id2: %d", id1, id2), func() {
 		reqBody, err := json.Marshal(meeting)
 		s.Require().NoError(err)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL+"/api/v1/meetings", bytes.NewReader(reqBody))
@@ -309,7 +337,7 @@ func (s *IntegrationTestSuite) TestGetMeeting() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err getting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err getting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Error)
 	})
 }
 
@@ -317,13 +345,14 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 	ctx := context.Background()
 	data := models.Meeting{
 		Manager:   2,
-		StartTime: 1200,
-		EndTime:   2400,
+		StartTime: time.Date(2023, 1, 10, 12, 0, 0, 0, mscLocation),
+		EndTime:   time.Date(2023, 1, 10, 24, 0, 0, 0, mscLocation),
 		Client:    1,
 	}
 	id := s.createMeeting(ctx, meeting)
 	reqBody, err := json.Marshal(data)
 	s.Require().NoError(err)
+
 	s.Run("update meeting", func() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/"+strconv.Itoa(id), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
@@ -343,6 +372,7 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 		s.Require().Equal(data.StartTime, respMeeting.StartTime)
 		s.Require().Equal(data.EndTime, respMeeting.EndTime)
 	})
+
 	s.Run("not found meeting", func() {
 		id = 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/0", bytes.NewReader(reqBody))
@@ -357,13 +387,14 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err updating meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err updating meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Error)
 	})
 }
 
 func (s *IntegrationTestSuite) TestDeleteMeeting() {
 	ctx := context.Background()
 	id := s.createMeeting(ctx, meeting)
+
 	s.Run("delete meeting", func() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/"+strconv.Itoa(id), nil)
 		s.Require().NoError(err)
@@ -383,6 +414,7 @@ func (s *IntegrationTestSuite) TestDeleteMeeting() {
 		s.Require().Equal(meeting.StartTime, respMeeting.StartTime)
 		s.Require().Equal(meeting.EndTime, respMeeting.EndTime)
 	})
+
 	s.Run("not found meeting", func() {
 		id = 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/0", nil)
@@ -397,7 +429,7 @@ func (s *IntegrationTestSuite) TestDeleteMeeting() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err deleting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Err)
+		s.Require().Equal(fmt.Sprintf("err deleting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Error)
 	})
 }
 

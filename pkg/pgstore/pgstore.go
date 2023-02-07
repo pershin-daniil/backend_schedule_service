@@ -6,11 +6,12 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
-	"strings"
 )
 
 //go:embed migrations
@@ -23,8 +24,10 @@ type Store struct {
 	db  *sqlx.DB
 }
 
-var ErrUserNotFound = fmt.Errorf("user not found")
-var ErrMeetingNotFound = fmt.Errorf("meeting not found")
+var (
+	ErrUserNotFound    = fmt.Errorf("user not found")
+	ErrMeetingNotFound = fmt.Errorf("meeting not found")
+)
 
 func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
 	db, err := sqlx.ConnectContext(ctx, "pgx", dsn)
@@ -58,7 +61,11 @@ func (s *Store) Migrate(direction migrate.MigrationDirection) error {
 		Dir:      "migrations",
 	}
 	_, err := migrate.Exec(s.db.DB, "postgres", asset, direction)
-	return err
+	if err != nil {
+		return fmt.Errorf("err migrating: %w", err)
+	}
+	s.log.Info("migration success")
+	return nil
 }
 
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
@@ -73,16 +80,16 @@ func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	return nil, err
 }
 
-func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {
+func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
 	var createdUser models.User
 	query := `
-INSERT INTO users (last_name, first_name)
-VALUES ($1, $2)
-RETURNING id, last_name, first_name;`
+INSERT INTO users (last_name, first_name, phone, email)
+VALUES ($1, $2, $3, $4)
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName).
-			Scan(&createdUser.ID, &createdUser.LastName, &createdUser.FirstName); err != nil {
+		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email).
+			StructScan(&createdUser); err != nil {
 			continue
 		}
 		return createdUser, nil
@@ -93,7 +100,7 @@ RETURNING id, last_name, first_name;`
 func (s *Store) GetUser(ctx context.Context, id int) (models.User, error) {
 	var user models.User
 	query := `
-SELECT * FROM users
+SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
 WHERE id = $1;`
 	var err error
 	for i := 0; i < retries; i++ {
@@ -109,17 +116,33 @@ WHERE id = $1;`
 	return models.User{}, fmt.Errorf("err getting user %d: %w", id, err)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, id int, user models.User) (models.User, error) {
+func (s *Store) UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error) {
 	var updatedUser models.User
-	query := `
-UPDATE users
-    SET last_name = $2,
-    first_name = $3
-WHERE id = $1
-RETURNING *;`
+	var args []interface{}
+	var query strings.Builder
+	query.WriteString(`UPDATE users SET `)
+	if user.LastName != nil {
+		args = append(args, *user.LastName)
+		query.WriteString(`last_name = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.FirstName != nil {
+		args = append(args, *user.FirstName)
+		query.WriteString(`first_name = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.Phone != nil {
+		args = append(args, *user.Phone)
+		query.WriteString(`phone = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.Email != nil {
+		args = append(args, *user.Email)
+		query.WriteString(`email = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	args = append(args, id)
+	query.WriteString(fmt.Sprintf(` updated_at = NOW() WHERE id = $%d
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`, len(args)))
 	var err error
 	for i := 0; i < retries; i++ {
-		err = s.db.GetContext(ctx, &updatedUser, query, id, user.LastName, user.FirstName)
+		err = s.db.GetContext(ctx, &updatedUser, query.String(), args...)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return models.User{}, ErrUserNotFound
@@ -252,4 +275,17 @@ func (s *Store) ResetTables(ctx context.Context, tables []string) error {
 		}
 	}
 	return err
+}
+
+func (s *Store) Exec(ctx context.Context, query string, args ...interface{}) error {
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (s *Store) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return s.db.QueryContext(ctx, query, args...)
+}
+
+func (s *Store) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return s.db.QueryRowContext(ctx, query, args...)
 }
