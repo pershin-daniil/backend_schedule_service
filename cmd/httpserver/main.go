@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
-	"github.com/pershin-daniil/TimeSlots/pkg/service"
-	migrate "github.com/rubenv/sql-migrate"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
+	"github.com/pershin-daniil/TimeSlots/pkg/service"
+	migrate "github.com/rubenv/sql-migrate"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pershin-daniil/TimeSlots/internal/rest"
@@ -43,9 +44,9 @@ func main() {
 		<-sigCh
 		log.Info("Received signal, shutting down...")
 		cancel()
-		server.Shutdown()
+		server.Shutdown(ctx)
 	}()
-	if err = server.Run(); err != nil {
+	if err = server.Run(ctx); err != nil {
 		log.Panic(err)
 	}
 	log.Info("Server stopped")

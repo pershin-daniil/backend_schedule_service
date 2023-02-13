@@ -6,11 +6,12 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
-	"strings"
 )
 
 //go:embed migrations
@@ -23,8 +24,10 @@ type Store struct {
 	db  *sqlx.DB
 }
 
-var ErrUserNotFound = fmt.Errorf("user not found")
-var ErrMeetingNotFound = fmt.Errorf("meeting not found")
+var (
+	ErrUserNotFound    = fmt.Errorf("user not found")
+	ErrMeetingNotFound = fmt.Errorf("meeting not found")
+)
 
 func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
 	db, err := sqlx.ConnectContext(ctx, "pgx", dsn)
@@ -58,14 +61,20 @@ func (s *Store) Migrate(direction migrate.MigrationDirection) error {
 		Dir:      "migrations",
 	}
 	_, err := migrate.Exec(s.db.DB, "postgres", asset, direction)
-	return err
+	if err != nil {
+		return fmt.Errorf("err migrating: %w", err)
+	}
+	s.log.Infof("migration success")
+	return nil
 }
 
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	var users []models.User
 	var err error
+	query := `SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
+WHERE NOT deleted;`
 	for i := 0; i < retries; i++ {
-		if err = s.db.SelectContext(ctx, &users, `SELECT * FROM users`); err != nil {
+		if err = s.db.SelectContext(ctx, &users, query); err != nil {
 			continue
 		}
 		return users, nil
@@ -73,16 +82,20 @@ func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
 	return nil, err
 }
 
-func (s *Store) CreateUser(ctx context.Context, user models.User) (models.User, error) {
+func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
 	var createdUser models.User
+	email := ``
+	if user.Email != nil {
+		email = *user.Email
+	}
 	query := `
-INSERT INTO users (last_name, first_name)
-VALUES ($1, $2)
-RETURNING id, last_name, first_name;`
+INSERT INTO users (last_name, first_name, phone, email)
+VALUES ($1, $2, $3, $4)
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName).
-			Scan(&createdUser.ID, &createdUser.LastName, &createdUser.FirstName); err != nil {
+		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, email).
+			StructScan(&createdUser); err != nil {
 			continue
 		}
 		return createdUser, nil
@@ -93,8 +106,8 @@ RETURNING id, last_name, first_name;`
 func (s *Store) GetUser(ctx context.Context, id int) (models.User, error) {
 	var user models.User
 	query := `
-SELECT * FROM users
-WHERE id = $1;`
+SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
+WHERE id = $1 AND NOT deleted;`
 	var err error
 	for i := 0; i < retries; i++ {
 		err = s.db.GetContext(ctx, &user, query, id)
@@ -109,17 +122,33 @@ WHERE id = $1;`
 	return models.User{}, fmt.Errorf("err getting user %d: %w", id, err)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, id int, user models.User) (models.User, error) {
+func (s *Store) UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error) {
 	var updatedUser models.User
-	query := `
-UPDATE users
-    SET last_name = $2,
-    first_name = $3
-WHERE id = $1
-RETURNING *;`
+	var args []interface{}
+	var query strings.Builder
+	query.WriteString(`UPDATE users SET` + ` `)
+	if user.LastName != nil {
+		args = append(args, *user.LastName)
+		query.WriteString(`last_name = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.FirstName != nil {
+		args = append(args, *user.FirstName)
+		query.WriteString(`first_name = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.Phone != nil {
+		args = append(args, *user.Phone)
+		query.WriteString(`phone = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if user.Email != nil {
+		args = append(args, *user.Email)
+		query.WriteString(`email = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	args = append(args, id)
+	query.WriteString(fmt.Sprintf(` updated_at = NOW() WHERE id = $%d
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`, len(args)))
 	var err error
 	for i := 0; i < retries; i++ {
-		err = s.db.GetContext(ctx, &updatedUser, query, id, user.LastName, user.FirstName)
+		err = s.db.GetContext(ctx, &updatedUser, query.String(), args...)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return models.User{}, ErrUserNotFound
@@ -134,9 +163,10 @@ RETURNING *;`
 func (s *Store) DeleteUser(ctx context.Context, id int) (models.User, error) {
 	var deletedUser models.User
 	query := `
-DELETE FROM users
+UPDATE users
+SET deleted = true
 WHERE id = $1
-RETURNING *;`
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, deleted, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
 		err = s.db.GetContext(ctx, &deletedUser, query, id)
@@ -151,16 +181,16 @@ RETURNING *;`
 	return models.User{}, fmt.Errorf("err deleting user %d: %w", id, err)
 }
 
-func (s *Store) CreateMeeting(ctx context.Context, meeting models.Meeting) (models.Meeting, error) {
+func (s *Store) CreateMeeting(ctx context.Context, meeting models.MeetingRequest) (models.Meeting, error) {
 	var newMeeting models.Meeting
 	query := `
 INSERT INTO meetings (manager, start_at, end_at, client)
 VALUES ($1, $2, $3, $4)
-RETURNING id, manager, start_at, end_at, client;`
+RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
 		if err = s.db.QueryRowxContext(ctx, query, meeting.Manager, meeting.StartTime, meeting.EndTime, meeting.Client).
-			Scan(&newMeeting.ID, &newMeeting.Manager, &newMeeting.StartTime, &newMeeting.EndTime, &newMeeting.Client); err != nil {
+			StructScan(&newMeeting); err != nil {
 			continue
 		}
 		return newMeeting, err
@@ -172,7 +202,7 @@ func (s *Store) GetMeetings(ctx context.Context) ([]models.Meeting, error) {
 	var meetings []models.Meeting
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.SelectContext(ctx, &meetings, `SELECT * FROM meetings`); err != nil {
+		if err = s.db.SelectContext(ctx, &meetings, `SELECT id, manager, start_at, end_at, client, updated_at, created_at FROM meetings`); err != nil {
 			continue
 		}
 		return meetings, nil
@@ -183,7 +213,7 @@ func (s *Store) GetMeetings(ctx context.Context) ([]models.Meeting, error) {
 func (s *Store) GetMeeting(ctx context.Context, id int) (models.Meeting, error) {
 	var meeting models.Meeting
 	query := `
-SELECT * FROM meetings
+SELECT id, manager, start_at, end_at, client, updated_at, created_at FROM meetings
 WHERE id = $1;`
 	var err error
 	for i := 0; i < retries; i++ {
@@ -199,19 +229,33 @@ WHERE id = $1;`
 	return models.Meeting{}, fmt.Errorf("err getting meeting %d: %w", id, err)
 }
 
-func (s *Store) UpdateMeeting(ctx context.Context, id int, meeting models.Meeting) (models.Meeting, error) {
+func (s *Store) UpdateMeeting(ctx context.Context, id int, meeting models.MeetingRequest) (models.Meeting, error) {
 	var updatedMeeting models.Meeting
-	query := `
-UPDATE meetings
-SET manager = $2,
-	start_at = $3,
-	end_at = $4,
-	client = $5
-WHERE id = $1
-RETURNING *`
+	var args []interface{}
+	var query strings.Builder
+	query.WriteString(`UPDATE meetings SET` + ` `)
+	if meeting.Manager != nil {
+		args = append(args, *meeting.Manager)
+		query.WriteString(`manager = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if meeting.StartTime != nil {
+		args = append(args, *meeting.StartTime)
+		query.WriteString(`start_at = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if meeting.EndTime != nil {
+		args = append(args, *meeting.EndTime)
+		query.WriteString(`end_at = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	if meeting.Client != nil {
+		args = append(args, *meeting.Client)
+		query.WriteString(`client = $` + fmt.Sprint(len(args)) + `, `)
+	}
+	args = append(args, id)
+	query.WriteString(fmt.Sprintf(` updated_at = NOW() WHERE id = $%d
+RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`, len(args)))
 	var err error
 	for i := 0; i < retries; i++ {
-		err = s.db.GetContext(ctx, &updatedMeeting, query, id, meeting.Manager, meeting.StartTime, meeting.EndTime, meeting.Client)
+		err = s.db.GetContext(ctx, &updatedMeeting, query.String(), args...)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return models.Meeting{}, ErrMeetingNotFound
@@ -225,12 +269,19 @@ RETURNING *`
 
 func (s *Store) DeleteMeeting(ctx context.Context, id int) (models.Meeting, error) {
 	var deletedMeeting models.Meeting
+	// TODO: looks like shit)))) ignoring deleteHistory feedback
+	var deletedHistory interface{}
 	query := `
 DELETE FROM meetings
 WHERE id = $1
-RETURNING *;`
+RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
+		_ = s.db.GetContext(ctx, &deletedHistory, `
+DELETE FROM meetings_history
+WHERE meetings_id = $1
+RETURNING NULL;
+`, id)
 		err = s.db.GetContext(ctx, &deletedMeeting, query, id)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -244,7 +295,7 @@ RETURNING *;`
 }
 
 func (s *Store) ResetTables(ctx context.Context, tables []string) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE `+strings.Join(tables, `, `))
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE`+` `+strings.Join(tables, `, `))
 	for _, table := range tables {
 		_, err = s.db.ExecContext(ctx, fmt.Sprintf(`ALTER SEQUENCE %s_id_seq RESTART`, table))
 		if err != nil {
@@ -252,4 +303,17 @@ func (s *Store) ResetTables(ctx context.Context, tables []string) error {
 		}
 	}
 	return err
+}
+
+func (s *Store) Exec(ctx context.Context, query string, args ...interface{}) error {
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (s *Store) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return s.db.QueryContext(ctx, query, args...)
+}
+
+func (s *Store) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return s.db.QueryRowContext(ctx, query, args...)
 }
