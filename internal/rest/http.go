@@ -3,10 +3,11 @@ package rest
 import (
 	"context"
 	"errors"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/sirupsen/logrus"
 )
@@ -52,7 +53,7 @@ func NewServer(log *logrus.Logger, app App, address, version string) *Server {
 	return &s
 }
 
-func (s *Server) Run() error {
+func (s *Server) Run(ctx context.Context) error {
 	s.log.Infof("starting server on %s", s.address)
 	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -60,9 +61,9 @@ func (s *Server) Run() error {
 	return nil
 }
 
-func (s *Server) Shutdown() {
+func (s *Server) Shutdown(ctx context.Context) {
 	// TODO: ctx, proper error handling and timeout - later
-	if err := s.server.Shutdown(context.Background()); err != nil {
+	if err := s.server.Shutdown(ctx); err != nil {
 		s.log.Warnf("err during shutting down server: %v", err)
 	}
 }
