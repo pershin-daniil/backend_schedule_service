@@ -25,6 +25,9 @@ jobs:
 
     - name: Build
       run: go build -v ./...
+      
+    - name: Docker
+      run: make up
 
     - name: Test
       run: make integration
