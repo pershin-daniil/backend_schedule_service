@@ -1,4 +1,4 @@
-name: Go test and lint
+name: Go test
 
 on:
   push:
