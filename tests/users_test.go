@@ -66,8 +66,8 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	}
 
 	Manager := 0
-	StartTime := time.Date(2023, 1, 1, 10, 0, 0, 0, time.Local)
-	EndTime := time.Date(2023, 1, 1, 11, 0, 0, 0, time.Local)
+	StartTime := time.Date(2023, 1, 1, 10, 0, 0, 0, time.UTC)
+	EndTime := time.Date(2023, 1, 1, 11, 0, 0, 0, time.UTC)
 	Client := 0
 
 	meeting = models.MeetingRequest{
@@ -296,8 +296,8 @@ func (s *IntegrationTestSuite) TestCreateMeeting() {
 	s.Require().NoError(err)
 	s.Require().Equal(*meeting.Manager, respMeeting.Manager)
 	s.Require().Equal(*meeting.Client, respMeeting.Client)
-	s.Require().Equal(*meeting.StartTime, respMeeting.StartTime)
-	s.Require().Equal(*meeting.EndTime, respMeeting.EndTime)
+	s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
+	s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
 }
 
 func (s *IntegrationTestSuite) TestGetMeeting() {
@@ -320,8 +320,8 @@ func (s *IntegrationTestSuite) TestGetMeeting() {
 		s.Require().Equal(id, respMeeting.ID)
 		s.Require().Equal(*meeting.Manager, respMeeting.Manager)
 		s.Require().Equal(*meeting.Client, respMeeting.Client)
-		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime)
-		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime)
+		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
+		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
 	})
 
 	s.Run("not found meeting", func() {
@@ -346,8 +346,8 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 	ctx := context.Background()
 	data := models.Meeting{
 		Manager:   2,
-		StartTime: time.Date(2023, 1, 10, 12, 0, 0, 0, time.Local),
-		EndTime:   time.Date(2023, 1, 10, 24, 0, 0, 0, time.Local),
+		StartTime: time.Date(2023, 1, 10, 12, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2023, 1, 10, 24, 0, 0, 0, time.UTC),
 		Client:    1,
 	}
 	id := s.createMeeting(ctx, meeting)
@@ -370,8 +370,8 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 		s.Require().Equal(id, respMeeting.ID)
 		s.Require().Equal(data.Manager, respMeeting.Manager)
 		s.Require().Equal(data.Client, respMeeting.Client)
-		s.Require().Equal(data.StartTime, respMeeting.StartTime)
-		s.Require().Equal(data.EndTime, respMeeting.EndTime)
+		s.Require().Equal(data.StartTime, respMeeting.StartTime.UTC())
+		s.Require().Equal(data.EndTime, respMeeting.EndTime.UTC())
 	})
 
 	s.Run("not found meeting", func() {
@@ -412,8 +412,8 @@ func (s *IntegrationTestSuite) TestDeleteMeeting() {
 		s.Require().Equal(id, respMeeting.ID)
 		s.Require().Equal(*meeting.Manager, respMeeting.Manager)
 		s.Require().Equal(*meeting.Client, respMeeting.Client)
-		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime)
-		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime)
+		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
+		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
 	})
 
 	s.Run("not found meeting", func() {
