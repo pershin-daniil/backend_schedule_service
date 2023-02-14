@@ -84,17 +84,13 @@ WHERE NOT deleted;`
 
 func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
 	var createdUser models.User
-	email := ``
-	if user.Email != nil {
-		email = *user.Email
-	}
 	query := `
 INSERT INTO users (last_name, first_name, phone, email)
 VALUES ($1, $2, $3, $4)
 RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, email).
+		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email).
 			StructScan(&createdUser); err != nil {
 			continue
 		}
@@ -292,6 +288,27 @@ RETURNING NULL;
 		return deletedMeeting, nil
 	}
 	return models.Meeting{}, fmt.Errorf("err deleting meeting %d: %w", id, err)
+}
+
+func (s *Store) GetUserByPhone(ctx context.Context, phone string) (models.UserLoginData, error) {
+	// TODO add retries
+	var user models.UserLoginData
+	query := `
+SELECT id,
+	   phone,
+	   password_hash,
+	   role
+FROM users
+WHERE phone = $1
+`
+	err := s.db.GetContext(ctx, &user, query, phone)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return models.UserLoginData{}, ErrUserNotFound
+	case err != nil:
+		return models.UserLoginData{}, fmt.Errorf("err getting user by phone %s: %w", phone, err)
+	}
+	return user, nil
 }
 
 func (s *Store) ResetTables(ctx context.Context, tables []string) error {

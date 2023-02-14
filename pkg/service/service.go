@@ -2,7 +2,15 @@ package service
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	_ "embed"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"github.com/golang-jwt/jwt"
+	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	"github.com/sirupsen/logrus"
@@ -24,12 +32,17 @@ type Store interface {
 	GetMeeting(ctx context.Context, id int) (models.Meeting, error)
 	UpdateMeeting(ctx context.Context, id int, data models.MeetingRequest) (models.Meeting, error)
 	DeleteMeeting(ctx context.Context, id int) (models.Meeting, error)
+	GetUserByPhone(ctx context.Context, phone string) (models.UserLoginData, error)
 }
 
+//go:embed private_rsa
+var privateSigningKey []byte
+
 type ScheduleService struct {
-	log      *logrus.Entry
-	store    Store
-	notifier Notifier
+	log        *logrus.Entry
+	store      Store
+	notifier   Notifier
+	privateKey *rsa.PrivateKey
 }
 
 func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
@@ -45,9 +58,10 @@ func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserReques
 
 func NewScheduleService(log *logrus.Logger, store Store, notifier Notifier) *ScheduleService {
 	s := ScheduleService{
-		log:      log.WithField("component", "service"),
-		store:    store,
-		notifier: notifier,
+		log:        log.WithField("component", "service"),
+		store:      store,
+		notifier:   notifier,
+		privateKey: mustGetPrivateKey(privateSigningKey),
 	}
 	return &s
 }
@@ -147,4 +161,41 @@ func (s *ScheduleService) DeleteMeeting(ctx context.Context, id int) (models.Mee
 
 func (s *ScheduleService) Notify(ctx context.Context, message string, user interface{}) error {
 	return s.notifier.Notify(ctx, message, user)
+}
+
+func (s *ScheduleService) Login(ctx context.Context, phone, password string) (string, error) {
+	user, err := s.store.GetUserByPhone(ctx, phone)
+	switch {
+	case errors.Is(err, pgstore.ErrUserNotFound):
+		return "", models.ErrInvalidCredentials
+	case err != nil:
+		return "", fmt.Errorf("err getting user by phone: %w", err)
+	}
+	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return "", models.ErrInvalidCredentials
+	}
+	return s.generateToken(user)
+}
+
+func (s *ScheduleService) generateToken(user models.UserLoginData) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, &models.Claims{
+		UserID: user.ID,
+		Role:   user.Role,
+	})
+	return token.SignedString(s.privateKey)
+}
+
+func mustGetPrivateKey(keyBytes []byte) *rsa.PrivateKey {
+	if len(keyBytes) == 0 {
+		panic("env PRIVATE_SIGNING_KEY not set")
+	}
+	block, _ := pem.Decode(keyBytes)
+	if block == nil {
+		panic("unable to decode private key to blocks")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	return key
 }

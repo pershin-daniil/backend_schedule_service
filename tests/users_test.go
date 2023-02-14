@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -441,6 +442,7 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, url stri
 	req, err := http.NewRequestWithContext(ctx, method, testURL+url, bytes.NewReader(reqBody))
 	s.Require().NoError(err)
 	req.Header.Set("Content-Type", "application/json")
+	//TODO req.Header.Set("Authorization", "Bearer "+s.token)
 	resp, err := http.DefaultClient.Do(req)
 	s.Require().NoError(err)
 	defer func() {
@@ -452,6 +454,12 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, url stri
 		s.Require().NoError(err)
 	}
 	return resp
+}
+
+func (s *IntegrationTestSuite) TestGenerateHashFromPassword() {
+	hash, err := bcrypt.GenerateFromPassword([]byte("jopa"), 0)
+	s.Require().NoError(err)
+	s.T().Log(string(hash))
 }
 
 func TestIntegrationTestSuite(t *testing.T) {
