@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pershin-daniil/TimeSlots/internal/rest"
 	"github.com/pershin-daniil/TimeSlots/pkg/logger"
@@ -52,10 +55,12 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	var err error
 
 	var (
-		LastName  = "Ivanov"
-		FirstName = "Ivan"
-		userPhone = "+7 999 999 99 99"
-		userEmail = "example@mail.ru"
+		LastName     = "Ivanov"
+		FirstName    = "Ivan"
+		userPhone    = "+7 999 999 99 99"
+		userEmail    = "example@mail.ru"
+		userPassword = "jopa"
+		userRole     = "client"
 	)
 
 	user = models.UserRequest{
@@ -63,6 +68,8 @@ func (s *IntegrationTestSuite) SetupSuite() {
 		FirstName: &FirstName,
 		Phone:     &userPhone,
 		Email:     &userEmail,
+		Password:  &userPassword,
+		Role:      &userRole,
 	}
 
 	Manager := 0
@@ -95,20 +102,57 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 }
 
-func (s *IntegrationTestSuite) createUser(ctx context.Context, user models.UserRequest) int {
+func (s *IntegrationTestSuite) createUser(ctx context.Context, user models.UserRequest) models.User {
 	s.T().Helper()
+	newPhone := uuid.New().String()
+	user.Phone = &newPhone
 	result := models.User{}
 	resp := s.sendRequest(ctx, http.MethodPost, "/api/v1/users", user, &result)
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
-	return result.ID
+	return result
 }
 
-func (s *IntegrationTestSuite) createMeeting(ctx context.Context, meeting models.MeetingRequest) int {
+func (s *IntegrationTestSuite) getToken(ctx context.Context, phone, password string) string {
 	s.T().Helper()
-	result := models.Meeting{}
-	resp := s.sendRequest(ctx, http.MethodPost, "/api/v1/meetings", meeting, &result)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL+`/api/v1/login`, nil)
+	s.Require().NoError(err)
+	req.SetBasicAuth(phone, password)
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	defer func() {
+		err = resp.Body.Close()
+		s.Require().NoError(err)
+	}()
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	var token models.TokenResponse
+	err = json.NewDecoder(resp.Body).Decode(&token)
+	s.Require().NoError(err)
+	return token.Token
+}
+
+func (s *IntegrationTestSuite) createMeeting(ctx context.Context, meeting models.MeetingRequest) (models.Meeting, string) {
+	s.T().Helper()
+	testUser1 := s.createUser(ctx, user)
+	testUser2 := s.createUser(ctx, user)
+	meeting.Manager = &testUser1.ID
+	meeting.Client = &testUser2.ID
+	token := s.getToken(ctx, testUser1.Phone, *user.Password)
+	reqBody, err := json.Marshal(meeting)
+	s.Require().NoError(err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL+"/api/v1/meetings", bytes.NewReader(reqBody))
+	s.Require().NoError(err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	defer func() {
+		err = resp.Body.Close()
+		s.Require().NoError(err)
+	}()
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
-	return result.ID
+	var respMeeting models.Meeting
+	err = json.NewDecoder(resp.Body).Decode(&respMeeting)
+	s.Require().NoError(err)
+	return respMeeting, token
 }
 
 func (s *IntegrationTestSuite) TestCreateUser() {
@@ -141,11 +185,13 @@ func (s *IntegrationTestSuite) TestCreateUser() {
 
 func (s *IntegrationTestSuite) TestGetUser() {
 	ctx := context.Background()
-	id := s.createUser(ctx, user)
+	testUser := s.createUser(ctx, user)
+	token := s.getToken(ctx, testUser.Phone, *user.Password)
 
 	s.Run("get user", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -156,17 +202,18 @@ func (s *IntegrationTestSuite) TestGetUser() {
 		var respUser models.User
 		err = json.NewDecoder(resp.Body).Decode(&respUser)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respUser.ID)
-		s.Require().Equal(*user.LastName, respUser.LastName)
-		s.Require().Equal(*user.FirstName, respUser.FirstName)
-		s.Require().Equal(*user.Email, respUser.Email)
-		s.Require().Equal(*user.Phone, respUser.Phone)
+		s.Require().Equal(testUser.ID, respUser.ID)
+		s.Require().Equal(testUser.LastName, respUser.LastName)
+		s.Require().Equal(testUser.FirstName, respUser.FirstName)
+		s.Require().Equal(testUser.Email, respUser.Email)
+		s.Require().Equal(testUser.Phone, respUser.Phone)
 	})
 
 	s.Run("get user not found", func() {
-		id = 0
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
+		testUser.ID = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -177,24 +224,36 @@ func (s *IntegrationTestSuite) TestGetUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err getting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
+		s.Require().Equal(fmt.Sprintf("err getting user (id %d) from store: %v", testUser.ID, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
 func (s *IntegrationTestSuite) TestUpdateUser() {
 	ctx := context.Background()
-	data := models.User{
-		LastName:  "Updated",
-		FirstName: "Boop!",
-		Phone:     "jopa",
+
+	var (
+		lastName = "Updated"
+		password = "Boop!"
+		phone    = "+1778979900"
+		role     = "coach"
+	)
+
+	data := models.UserRequest{
+		LastName:  &lastName,
+		FirstName: &password,
+		Phone:     &phone,
+		Role:      &role,
 	}
-	id := s.createUser(ctx, user)
+
+	testUser := s.createUser(ctx, user)
+	token := s.getToken(ctx, testUser.Phone, *user.Password)
 	reqBody, err := json.Marshal(data)
 	s.Require().NoError(err)
 
 	s.Run("update user", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(id), bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -205,16 +264,17 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 		var respUser models.User
 		err = json.NewDecoder(resp.Body).Decode(&respUser)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respUser.ID)
-		s.Require().Equal(data.LastName, respUser.LastName)
-		s.Require().Equal(data.FirstName, respUser.FirstName)
-		s.Require().Equal(data.Phone, respUser.Phone)
+		s.Require().Equal(testUser.ID, respUser.ID)
+		s.Require().Equal(*data.LastName, respUser.LastName)
+		s.Require().Equal(*data.FirstName, respUser.FirstName)
+		s.Require().Equal(*data.Phone, respUser.Phone)
 	})
 
 	s.Run("update user not found", func() {
-		id = 0
-		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(id), bytes.NewReader(reqBody))
+		testUser.ID = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -225,19 +285,21 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err updating user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
+		s.Require().Equal(fmt.Sprintf("err updating user (id %d) from store: %v", testUser.ID, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
 func (s *IntegrationTestSuite) TestDeleteUser() {
 	ctx := context.Background()
-	id := s.createUser(ctx, user)
+	testUser := s.createUser(ctx, user)
+	token := s.getToken(ctx, testUser.Phone, *user.Password)
 
 	s.Run("delete user", func() {
 		reqBody, err := json.Marshal(user)
 		s.Require().NoError(err)
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/"+strconv.Itoa(id), bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -248,18 +310,18 @@ func (s *IntegrationTestSuite) TestDeleteUser() {
 		var respUser models.User
 		err = json.NewDecoder(resp.Body).Decode(&respUser)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respUser.ID)
-		s.Require().Equal(*user.LastName, respUser.LastName)
-		s.Require().Equal(*user.FirstName, respUser.FirstName)
+		s.Require().Equal(testUser.ID, respUser.ID)
+		s.Require().Equal(testUser.LastName, respUser.LastName)
+		s.Require().Equal(testUser.FirstName, respUser.FirstName)
 		s.Require().Equal(true, respUser.Deleted)
-		s.Require().Equal(*user.Email, respUser.Email)
-		s.Require().Equal(*user.Phone, respUser.Phone)
+		s.Require().Equal(testUser.Email, respUser.Email)
 	})
 
 	s.Run("delete user not found", func() {
-		id = 0
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/"+strconv.Itoa(id), nil)
+		testUser.ID = 0
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -270,20 +332,23 @@ func (s *IntegrationTestSuite) TestDeleteUser() {
 		var respError errResp
 		err = json.NewDecoder(resp.Body).Decode(&respError)
 		s.Require().NoError(err)
-		s.Require().Equal(fmt.Sprintf("err deleting user (id %d) from store: %v", id, pgstore.ErrUserNotFound), respError.Error)
+		s.Require().Equal(fmt.Sprintf("err deleting user (id %d) from store: %v", testUser.ID, pgstore.ErrUserNotFound), respError.Error)
 	})
 }
 
 func (s *IntegrationTestSuite) TestCreateMeeting() {
 	ctx := context.Background()
-	id1 := s.createUser(ctx, user)
-	id2 := s.createUser(ctx, user)
-	meeting.Manager = &id1
-	meeting.Client = &id2
+	testUser1 := s.createUser(ctx, user)
+	testUser2 := s.createUser(ctx, user)
+	meeting.Manager = &testUser1.ID
+	meeting.Client = &testUser2.ID
+	user.ID = &testUser1.ID
+	token := s.getToken(ctx, testUser1.Phone, *user.Password)
 	reqBody, err := json.Marshal(meeting)
 	s.Require().NoError(err)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL+"/api/v1/meetings", bytes.NewReader(reqBody))
 	s.Require().NoError(err)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	s.Require().NoError(err)
 	defer func() {
@@ -302,11 +367,11 @@ func (s *IntegrationTestSuite) TestCreateMeeting() {
 
 func (s *IntegrationTestSuite) TestGetMeeting() {
 	ctx := context.Background()
-	id := s.createMeeting(ctx, meeting)
-
+	newMeeting, token := s.createMeeting(ctx, meeting)
 	s.Run("get meeting", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/meetings/"+strconv.Itoa(id), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/meetings/"+strconv.Itoa(newMeeting.ID), nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -317,17 +382,18 @@ func (s *IntegrationTestSuite) TestGetMeeting() {
 		var respMeeting models.Meeting
 		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respMeeting.ID)
-		s.Require().Equal(*meeting.Manager, respMeeting.Manager)
-		s.Require().Equal(*meeting.Client, respMeeting.Client)
-		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
-		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
+		s.Require().Equal(newMeeting.ID, respMeeting.ID)
+		s.Require().Equal(newMeeting.Manager, respMeeting.Manager)
+		s.Require().Equal(newMeeting.Client, respMeeting.Client)
+		s.Require().Equal(newMeeting.StartTime.UTC(), respMeeting.StartTime.UTC())
+		s.Require().Equal(newMeeting.EndTime.UTC(), respMeeting.EndTime.UTC())
 	})
 
 	s.Run("not found meeting", func() {
-		id = 0
+		id := 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/meetings/0", nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -350,13 +416,14 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 		EndTime:   time.Date(2023, 1, 10, 24, 0, 0, 0, time.UTC),
 		Client:    1,
 	}
-	id := s.createMeeting(ctx, meeting)
+	newMeeting, token := s.createMeeting(ctx, meeting)
 	reqBody, err := json.Marshal(data)
 	s.Require().NoError(err)
 
 	s.Run("update meeting", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/"+strconv.Itoa(id), bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/"+strconv.Itoa(newMeeting.ID), bytes.NewReader(reqBody))
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -367,7 +434,7 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 		var respMeeting models.Meeting
 		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respMeeting.ID)
+		s.Require().Equal(newMeeting.ID, respMeeting.ID)
 		s.Require().Equal(data.Manager, respMeeting.Manager)
 		s.Require().Equal(data.Client, respMeeting.Client)
 		s.Require().Equal(data.StartTime, respMeeting.StartTime.UTC())
@@ -375,9 +442,10 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 	})
 
 	s.Run("not found meeting", func() {
-		id = 0
+		id := 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, testURL+"/api/v1/meetings/0", bytes.NewReader(reqBody))
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -394,11 +462,12 @@ func (s *IntegrationTestSuite) TestUpdateMeeting() {
 
 func (s *IntegrationTestSuite) TestDeleteMeeting() {
 	ctx := context.Background()
-	id := s.createMeeting(ctx, meeting)
+	newMeeting, token := s.createMeeting(ctx, meeting)
 
 	s.Run("delete meeting", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/"+strconv.Itoa(id), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/"+strconv.Itoa(newMeeting.ID), nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -409,17 +478,18 @@ func (s *IntegrationTestSuite) TestDeleteMeeting() {
 		var respMeeting models.Meeting
 		err = json.NewDecoder(resp.Body).Decode(&respMeeting)
 		s.Require().NoError(err)
-		s.Require().Equal(id, respMeeting.ID)
-		s.Require().Equal(*meeting.Manager, respMeeting.Manager)
-		s.Require().Equal(*meeting.Client, respMeeting.Client)
-		s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
-		s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
+		s.Require().Equal(newMeeting.ID, respMeeting.ID)
+		s.Require().Equal(newMeeting.Manager, respMeeting.Manager)
+		s.Require().Equal(newMeeting.Client, respMeeting.Client)
+		s.Require().Equal(newMeeting.StartTime.UTC(), respMeeting.StartTime.UTC())
+		s.Require().Equal(newMeeting.EndTime.UTC(), respMeeting.EndTime.UTC())
 	})
 
 	s.Run("not found meeting", func() {
-		id = 0
+		id := 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/0", nil)
 		s.Require().NoError(err)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		s.Require().NoError(err)
 		defer func() {
@@ -452,6 +522,12 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, url stri
 		s.Require().NoError(err)
 	}
 	return resp
+}
+
+func (s *IntegrationTestSuite) TestGenerateHashFromPassword() {
+	hash, err := bcrypt.GenerateFromPassword([]byte("jopa"), 0)
+	s.Require().NoError(err)
+	s.T().Log(string(hash))
 }
 
 func TestIntegrationTestSuite(t *testing.T) {

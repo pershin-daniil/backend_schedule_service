@@ -84,23 +84,52 @@ WHERE NOT deleted;`
 
 func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
 	var createdUser models.User
-	email := ``
-	if user.Email != nil {
-		email = *user.Email
+	if ok := s.isUserExists(ctx, user); !ok {
+		return models.User{}, fmt.Errorf("err user already exists")
 	}
 	query := `
-INSERT INTO users (last_name, first_name, phone, email)
-VALUES ($1, $2, $3, $4)
-RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`
+INSERT INTO users (last_name, first_name, phone, email, password_hash, role)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash, role;`
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, email).
+		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role).
 			StructScan(&createdUser); err != nil {
 			continue
 		}
 		return createdUser, nil
 	}
-	return models.User{}, fmt.Errorf("err getting users: %w", err)
+	return models.User{}, fmt.Errorf("err creating users: %w", err)
+}
+
+func (s *Store) isUserExists(ctx context.Context, user models.UserRequest) bool {
+	query := `
+SELECT last_name, first_name, phone FROM users
+WHERE last_name=$1 AND first_name=$2 OR phone=$3 AND NOT deleted;`
+	if err := s.db.GetContext(ctx, models.User{}, query, user.LastName, user.FirstName, user.Phone); errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	return true
+}
+
+func (s *Store) GetUserByPhone(ctx context.Context, phone string) (models.User, error) {
+	var user models.User
+	query := `
+SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, phone, password_hash, role
+FROM users
+WHERE phone = $1 AND NOT deleted;`
+	var err error
+	for i := 0; i < retries; i++ {
+		err = s.db.GetContext(ctx, &user, query, phone)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return models.User{}, ErrUserNotFound
+		case err != nil:
+			continue
+		}
+		return user, nil
+	}
+	return models.User{}, fmt.Errorf("err getting user by phone (%s): %w", phone, err)
 }
 
 func (s *Store) GetUser(ctx context.Context, id int) (models.User, error) {
@@ -269,7 +298,7 @@ RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`, len(a
 
 func (s *Store) DeleteMeeting(ctx context.Context, id int) (models.Meeting, error) {
 	var deletedMeeting models.Meeting
-	// TODO: looks like shit)))) ignoring deleteHistory feedback
+	// TODO: don't delete History
 	var deletedHistory interface{}
 	query := `
 DELETE FROM meetings
