@@ -2,6 +2,10 @@ package rest
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	_ "embed"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"time"
@@ -13,19 +17,24 @@ import (
 )
 
 type Server struct {
-	log     *logrus.Entry
-	address string
-	version string
-	app     App
-	server  *http.Server
+	log       *logrus.Entry
+	address   string
+	version   string
+	app       App
+	server    *http.Server
+	publicKey *rsa.PublicKey
 }
+
+//go:embed private_rsa.pub
+var publicSigningKey []byte
 
 func NewServer(log *logrus.Logger, app App, address, version string) *Server {
 	s := Server{
-		log:     log.WithField("component", "rest"),
-		address: address,
-		version: version,
-		app:     app,
+		log:       log.WithField("component", "rest"),
+		address:   address,
+		version:   version,
+		app:       app,
+		publicKey: mustGetPublicKey(publicSigningKey),
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -33,16 +42,20 @@ func NewServer(log *logrus.Logger, app App, address, version string) *Server {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(middleware.RequestLogger(&middleware.DefaultLogFormatter{Logger: s.log, NoColor: true}))
 		r.Route("/v1", func(r chi.Router) {
-			r.Get("/users", s.getUsersHandler)
+			r.Post("/login", s.loginHandler)
 			r.Post("/users", s.createUserHandler)
-			r.Get("/users/{id}", s.getUserHandler)
-			r.Patch("/users/{id}", s.updateUserHandler)
-			r.Delete("/users/{id}", s.deleteUserHandler)
-			r.Post("/meetings", s.createMeetingHandler)
-			r.Get("/meetings", s.getMeetingsHandler)
-			r.Get("/meetings/{id}", s.getMeetingHandler)
-			r.Patch("/meetings/{id}", s.updateMeetingHandler)
-			r.Delete("/meetings/{id}", s.deleteMeetingHandler)
+			r.Group(func(r chi.Router) {
+				r.Use(s.jwtAuth)
+				r.Get("/users", s.getUsersHandler)
+				r.Get("/users/{id}", s.getUserHandler)
+				r.Patch("/users/{id}", s.updateUserHandler)
+				r.Delete("/users/{id}", s.deleteUserHandler)
+				r.Post("/meetings", s.createMeetingHandler)
+				r.Get("/meetings", s.getMeetingsHandler)
+				r.Get("/meetings/{id}", s.getMeetingHandler)
+				r.Patch("/meetings/{id}", s.updateMeetingHandler)
+				r.Delete("/meetings/{id}", s.deleteMeetingHandler)
+			})
 		})
 	})
 	s.server = &http.Server{
@@ -66,4 +79,19 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if err := s.server.Shutdown(ctx); err != nil {
 		s.log.Warnf("err during shutting down server: %v", err)
 	}
+}
+
+func mustGetPublicKey(keyBytes []byte) *rsa.PublicKey {
+	if len(keyBytes) == 0 {
+		panic("file public.pub is missing or invalid")
+	}
+	block, _ := pem.Decode(keyBytes)
+	if block == nil {
+		panic("unable to decode public key to blocks")
+	}
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	return key.(*rsa.PublicKey)
 }

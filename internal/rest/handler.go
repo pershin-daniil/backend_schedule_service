@@ -2,11 +2,13 @@ package rest
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -26,6 +28,7 @@ type App interface {
 	UpdateMeeting(ctx context.Context, id int, meeting models.MeetingRequest) (models.Meeting, error)
 	DeleteMeeting(ctx context.Context, id int) (models.Meeting, error)
 	service.Notifier
+	Login(ctx context.Context, login, password string) (string, error)
 }
 
 func (s *Server) versionHandler(w http.ResponseWriter, _ *http.Request) {
@@ -51,6 +54,10 @@ func (s *Server) createUserHandler(w http.ResponseWriter, r *http.Request) {
 	var user models.UserRequest
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		s.writeResponse(w, http.StatusBadRequest, err)
+		return
+	}
+	if user.Password == nil || *user.Password == "" {
+		s.writeResponse(w, http.StatusUnprocessableEntity, user)
 		return
 	}
 	createdUser, err := s.app.CreateUser(ctx, user)
@@ -214,6 +221,40 @@ func (s *Server) deleteMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeResponse(w, http.StatusOK, deletedMeeting)
+}
+
+func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		s.writeResponse(w, http.StatusUnauthorized, errors.New("no basic auth"))
+		return
+	}
+	basicAuth := strings.Split(auth, " ")
+	if len(basicAuth) != 2 || basicAuth[0] != "Basic" {
+		s.writeResponse(w, http.StatusUnauthorized, errors.New("invalid basic auth"))
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(basicAuth[1])
+	if err != nil {
+		s.writeResponse(w, http.StatusUnauthorized, errors.New("invalid basic auth"))
+		return
+	}
+	creds := strings.Split(string(decoded), ":")
+	if len(creds) != 2 {
+		s.writeResponse(w, http.StatusUnauthorized, errors.New("invalid basic auth"))
+		return
+	}
+	token, err := s.app.Login(r.Context(), creds[0], creds[1])
+	switch {
+	case errors.Is(err, pgstore.ErrUserNotFound):
+		s.writeResponse(w, http.StatusNotFound, err)
+	case errors.Is(err, models.ErrInvalidCredentials):
+		s.writeResponse(w, http.StatusUnauthorized, err)
+	case err != nil:
+		s.log.Warnf("err during login: %v", err)
+		s.writeResponse(w, http.StatusInternalServerError, err)
+	}
+	s.writeResponse(w, http.StatusOK, models.TokenResponse{Token: token})
 }
 
 func (s *Server) writeResponse(w http.ResponseWriter, status int, data interface{}) {
