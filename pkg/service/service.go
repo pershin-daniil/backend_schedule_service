@@ -34,6 +34,7 @@ type Store interface {
 	UpdateMeeting(ctx context.Context, id int, data models.MeetingRequest) (models.Meeting, error)
 	DeleteMeeting(ctx context.Context, id int) (models.Meeting, error)
 	GetUserByPhone(ctx context.Context, phone string) (models.User, error)
+	IsUserExists(ctx context.Context, user models.UserRequest) (bool, error)
 }
 
 //go:embed private_rsa
@@ -59,7 +60,7 @@ func NewScheduleService(log *logrus.Logger, store Store, notifier Notifier) *Sch
 func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(*user.Password), 0)
 	if err != nil {
-		return models.User{}, fmt.Errorf("err generatting from password: %w", err)
+		return models.User{}, fmt.Errorf("err generating from password: %w", err)
 	}
 	sPasswordHash := string(passwordHash)
 	user.PasswordHash = &sPasswordHash

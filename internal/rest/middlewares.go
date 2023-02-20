@@ -11,6 +11,10 @@ import (
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 )
 
+type ctxClaimsType string
+
+const ctxClaimsStr ctxClaimsType = "claims"
+
 func (s *Server) jwtAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -32,13 +36,13 @@ func (s *Server) jwtAuth(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), "claims", claims))
+		r = r.WithContext(context.WithValue(r.Context(), ctxClaimsStr, claims))
 		next.ServeHTTP(w, r)
 	})
 }
 
 func (s *Server) getClaims(ctx context.Context) models.Claims {
-	claims, ok := ctx.Value("claims").(models.Claims)
+	claims, ok := ctx.Value(ctxClaimsStr).(models.Claims)
 	if !ok {
 		return models.Claims{}
 	}

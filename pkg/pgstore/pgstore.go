@@ -27,6 +27,7 @@ type Store struct {
 var (
 	ErrUserNotFound    = fmt.Errorf("user not found")
 	ErrMeetingNotFound = fmt.Errorf("meeting not found")
+	ErrUserExists      = fmt.Errorf("user already exists")
 )
 
 func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
@@ -83,32 +84,55 @@ WHERE NOT deleted;`
 }
 
 func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return models.User{}, fmt.Errorf("err openning transaction: %w", err)
+	}
+	defer func() {
+		if err = tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			s.log.Warnf("err rolling back transaction %v", err)
+		}
+	}()
 	var createdUser models.User
-	if ok := s.isUserExists(ctx, user); !ok {
-		return models.User{}, fmt.Errorf("err user already exists")
+
+	//TODO rework
+	if ok := s.isUserExists(ctx, tx, user); !ok {
+		return models.User{}, ErrUserExists
 	}
 	query := `
 INSERT INTO users (last_name, first_name, phone, email, password_hash, role)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash, role;`
-	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role).
+		// TODO use GetContext everywhere or QueryRowContext everywhere
+		if err = tx.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role).
 			StructScan(&createdUser); err != nil {
 			continue
+		}
+		if err = tx.Commit(); err != nil {
+			return models.User{}, fmt.Errorf("err committing transaction: %w", err)
 		}
 		return createdUser, nil
 	}
 	return models.User{}, fmt.Errorf("err creating users: %w", err)
 }
 
-func (s *Store) isUserExists(ctx context.Context, user models.UserRequest) bool {
+type querier interface {
+	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+}
+
+func (s *Store) IsUserExists(ctx context.Context, user models.UserRequest) (bool, error) {
+	return s.isUserExists(ctx, s.db, user)
+}
+
+func (s *Store) isUserExists(ctx context.Context, querier querier, user models.UserRequest) (bool, error) {
 	query := `
-SELECT last_name, first_name, phone FROM users
+SELECT TRUE FROM users
 WHERE last_name=$1 AND first_name=$2 OR phone=$3 AND NOT deleted;`
-	if err := s.db.GetContext(ctx, models.User{}, query, user.LastName, user.FirstName, user.Phone); errors.Is(err, sql.ErrNoRows) {
+	if err := querier.GetContext(ctx, models.User{}, query, user.LastName, user.FirstName, user.Phone); errors.Is(err, sql.ErrNoRows) {
 		return false
 	}
+	// TODO retries
 	return true
 }
 

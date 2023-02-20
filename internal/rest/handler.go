@@ -61,7 +61,12 @@ func (s *Server) createUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	createdUser, err := s.app.CreateUser(ctx, user)
-	if err != nil {
+	switch {
+	// TODO test it
+	case errors.Is(err, pgstore.ErrUserExists):
+		s.writeResponse(w, http.StatusConflict, err)
+		return
+	case err != nil:
 		s.log.Warnf("err during creating user: %v", err)
 		s.writeResponse(w, http.StatusInternalServerError, err)
 		return
@@ -120,6 +125,11 @@ func (s *Server) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
+	}
+	claims := s.getClaims(ctx)
+	// TODO add this check to all methods
+	if id != claims.UserID && claims.Role != models.RoleCoach {
+		s.writeResponse(w, http.StatusForbidden, nil)
 	}
 	deletedUser, err := s.app.DeleteUser(ctx, id)
 	switch {

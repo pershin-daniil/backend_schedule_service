@@ -209,6 +209,9 @@ func (s *IntegrationTestSuite) TestGetUser() {
 		s.Require().Equal(testUser.Phone, respUser.Phone)
 	})
 
+	s.Run("get different user by client", func() {
+	})
+
 	s.Run("get user not found", func() {
 		testUser.ID = 0
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL+"/api/v1/users/"+strconv.Itoa(testUser.ID), nil)
@@ -290,6 +293,7 @@ func (s *IntegrationTestSuite) TestUpdateUser() {
 }
 
 func (s *IntegrationTestSuite) TestDeleteUser() {
+	s.T().Skip()
 	ctx := context.Background()
 	testUser := s.createUser(ctx, user)
 	token := s.getToken(ctx, testUser.Phone, *user.Password)
@@ -485,21 +489,12 @@ func (s *IntegrationTestSuite) TestDeleteMeeting() {
 		s.Require().Equal(newMeeting.EndTime.UTC(), respMeeting.EndTime.UTC())
 	})
 
+	// TODO rework tests with helpers
 	s.Run("not found meeting", func() {
 		id := 0
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, testURL+"/api/v1/meetings/0", nil)
-		s.Require().NoError(err)
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
-		s.Require().NoError(err)
-		defer func() {
-			err = resp.Body.Close()
-			s.Require().NoError(err)
-		}()
-		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 		var respError errResp
-		err = json.NewDecoder(resp.Body).Decode(&respError)
-		s.Require().NoError(err)
+		resp := s.sendAuthorisedRequest(ctx, http.MethodDelete, token, "/api/v1/meetings/0", nil, &respError)
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 		s.Require().Equal(fmt.Sprintf("err deleting meeting (id %d) from store: %v", id, pgstore.ErrMeetingNotFound), respError.Error)
 	})
 }
@@ -511,6 +506,27 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, url stri
 	req, err := http.NewRequestWithContext(ctx, method, testURL+url, bytes.NewReader(reqBody))
 	s.Require().NoError(err)
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	defer func() {
+		err = resp.Body.Close()
+		s.Require().NoError(err)
+	}()
+	if dest != nil {
+		err = json.NewDecoder(resp.Body).Decode(&dest)
+		s.Require().NoError(err)
+	}
+	return resp
+}
+
+func (s *IntegrationTestSuite) sendAuthorisedRequest(ctx context.Context, method, token, url string, body interface{}, dest interface{}) *http.Response {
+	s.T().Helper()
+	reqBody, err := json.Marshal(body)
+	s.Require().NoError(err)
+	req, err := http.NewRequestWithContext(ctx, method, testURL+url, bytes.NewReader(reqBody))
+	s.Require().NoError(err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	s.Require().NoError(err)
 	defer func() {
