@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,25 +16,27 @@ type ctxClaimsType string
 
 const ctxClaimsStr ctxClaimsType = "claims"
 
+var ErrUnauthorised = errors.New("unauthorized")
+
 func (s *Server) jwtAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			w.WriteHeader(http.StatusUnauthorized)
+			s.writeResponse(w, http.StatusUnauthorized, ErrUnauthorised)
 			return
 		}
 		headerParts := strings.Split(authHeader, " ")
 		if len(headerParts) != 2 {
-			w.WriteHeader(http.StatusUnauthorized)
+			s.writeResponse(w, http.StatusUnauthorized, ErrUnauthorised)
 			return
 		}
 		if headerParts[0] != "Bearer" {
-			w.WriteHeader(http.StatusUnauthorized)
+			s.writeResponse(w, http.StatusUnauthorized, ErrUnauthorised)
 			return
 		}
 		claims, err := parseToken(headerParts[1], s.publicKey)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
+			s.writeResponse(w, http.StatusUnauthorized, ErrUnauthorised)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), ctxClaimsStr, claims))

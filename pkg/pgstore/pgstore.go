@@ -6,7 +6,9 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/pershin-daniil/TimeSlots/pkg/metrics"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -70,6 +72,10 @@ func (s *Store) Migrate(direction migrate.MigrationDirection) error {
 }
 
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUsers").Observe(time.Since(started).Seconds())
+	}()
 	var users []models.User
 	var err error
 	query := `SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
@@ -80,6 +86,7 @@ WHERE NOT deleted;`
 		}
 		return users, nil
 	}
+	metrics.PgErrCount.WithLabelValues("GetUsers").Inc()
 	return nil, err
 }
 
