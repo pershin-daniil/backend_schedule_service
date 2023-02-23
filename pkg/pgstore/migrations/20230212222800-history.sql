@@ -75,11 +75,6 @@ CREATE TRIGGER meetings_history_update
     FOR EACH ROW
 EXECUTE PROCEDURE meetings_history();
 
--- DROP TRIGGER IF EXISTS meetings_history_delete ON meetings;
--- CREATE TRIGGER meetings_history_delete
---     AFTER DELETE ON meetings
---     FOR EACH ROW
--- EXECUTE PROCEDURE meetings_history();
 
 DROP TRIGGER IF EXISTS meetings_history_insert ON meetings;
 CREATE TRIGGER meetings_history_insert
@@ -96,7 +91,6 @@ DROP FUNCTION users_history();
 DROP TABLE users_history;
 
 DROP TRIGGER meetings_history_update ON meetings;
--- DROP TRIGGER meetings_history_delete ON meetings;
 DROP TRIGGER meetings_history_insert ON meetings;
 DROP FUNCTION meetings_history();
 DROP TABLE meetings_history;

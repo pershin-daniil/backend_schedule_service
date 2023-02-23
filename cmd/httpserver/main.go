@@ -44,7 +44,6 @@ func main() {
 		<-sigCh
 		log.Info("Received signal, shutting down...")
 		cancel()
-		server.Shutdown(ctx)
 	}()
 	if err = server.Run(ctx); err != nil {
 		log.Panic(err)

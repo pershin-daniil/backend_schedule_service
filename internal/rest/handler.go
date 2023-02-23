@@ -61,7 +61,11 @@ func (s *Server) createUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	createdUser, err := s.app.CreateUser(ctx, user)
-	if err != nil {
+	switch {
+	case errors.Is(err, pgstore.ErrUserExists):
+		s.writeResponse(w, http.StatusConflict, err)
+		return
+	case err != nil:
 		s.log.Warnf("err during creating user: %v", err)
 		s.writeResponse(w, http.StatusInternalServerError, err)
 		return
@@ -96,8 +100,12 @@ func (s *Server) updateUserHandler(w http.ResponseWriter, r *http.Request) {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
 	}
+	claims := s.getClaims(ctx)
+	if id != claims.UserID && claims.Role != models.RoleCoach {
+		s.writeResponse(w, http.StatusForbidden, nil)
+	}
 	var newData models.UserRequest
-	if err := json.NewDecoder(r.Body).Decode(&newData); err != nil {
+	if err = json.NewDecoder(r.Body).Decode(&newData); err != nil {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
 	}
@@ -121,6 +129,10 @@ func (s *Server) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
 	}
+	claims := s.getClaims(ctx)
+	if id != claims.UserID || claims.Role != models.RoleCoach {
+		s.writeResponse(w, http.StatusForbidden, nil)
+	}
 	deletedUser, err := s.app.DeleteUser(ctx, id)
 	switch {
 	case errors.Is(err, pgstore.ErrUserNotFound):
@@ -140,6 +152,10 @@ func (s *Server) createMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&meeting); err != nil {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
+	}
+	claims := s.getClaims(ctx)
+	if *meeting.Manager != claims.UserID && claims.Role != models.RoleCoach {
+		s.writeResponse(w, http.StatusForbidden, nil)
 	}
 	createdMeeting, err := s.app.CreateMeeting(ctx, meeting)
 	if err != nil {
@@ -188,9 +204,13 @@ func (s *Server) updateMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var newData models.MeetingRequest
-	if err := json.NewDecoder(r.Body).Decode(&newData); err != nil {
+	if err = json.NewDecoder(r.Body).Decode(&newData); err != nil {
 		s.writeResponse(w, http.StatusBadRequest, err)
 		return
+	}
+	claims := s.getClaims(ctx)
+	if claims.Role != models.RoleCoach {
+		s.writeResponse(w, http.StatusForbidden, nil)
 	}
 	updatedMeeting, err := s.app.UpdateMeeting(ctx, id, newData)
 	switch {
