@@ -67,18 +67,19 @@ func NewServer(log *logrus.Logger, app App, address, version string) *Server {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+		gfCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.server.Shutdown(gfCtx); err != nil {
+			s.log.Warnf("err shutting down properly")
+		}
+	}()
 	s.log.Infof("starting server on %s", s.address)
 	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
-}
-
-func (s *Server) Shutdown(ctx context.Context) {
-	// TODO: ctx, proper error handling and timeout - later
-	if err := s.server.Shutdown(ctx); err != nil {
-		s.log.Warnf("err during shutting down server: %v", err)
-	}
 }
 
 func mustGetPublicKey(keyBytes []byte) *rsa.PublicKey {

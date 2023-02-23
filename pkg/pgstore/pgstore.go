@@ -27,6 +27,7 @@ type Store struct {
 var (
 	ErrUserNotFound    = fmt.Errorf("user not found")
 	ErrMeetingNotFound = fmt.Errorf("meeting not found")
+	ErrUserExists      = fmt.Errorf("user already exists")
 )
 
 func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
@@ -83,18 +84,29 @@ WHERE NOT deleted;`
 }
 
 func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
-	var createdUser models.User
-	if ok := s.isUserExists(ctx, user); !ok {
-		return models.User{}, fmt.Errorf("err user already exists")
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return models.User{}, fmt.Errorf("err openning transaction: %w", err)
 	}
+	defer func() {
+		if err = tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			s.log.Warnf("err rolling back transaction %v", err)
+		}
+	}()
+	exists, err := s.userExists(ctx, tx, user)
+	if err != nil {
+		return models.User{}, err
+	}
+	if exists {
+		return models.User{}, ErrUserExists
+	}
+	var createdUser models.User
 	query := `
 INSERT INTO users (last_name, first_name, phone, email, password_hash, role)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash, role;`
-	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role).
-			StructScan(&createdUser); err != nil {
+		if err = s.db.GetContext(ctx, &createdUser, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role); err != nil {
 			continue
 		}
 		return createdUser, nil
@@ -102,14 +114,27 @@ RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, update
 	return models.User{}, fmt.Errorf("err creating users: %w", err)
 }
 
-func (s *Store) isUserExists(ctx context.Context, user models.UserRequest) bool {
+type requester interface {
+	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+}
+
+func (s *Store) userExists(ctx context.Context, requester requester, user models.UserRequest) (bool, error) {
 	query := `
-SELECT last_name, first_name, phone FROM users
-WHERE last_name=$1 AND first_name=$2 OR phone=$3 AND NOT deleted;`
-	if err := s.db.GetContext(ctx, models.User{}, query, user.LastName, user.FirstName, user.Phone); errors.Is(err, sql.ErrNoRows) {
-		return false
+SELECT TRUE FROM users
+WHERE phone=$1 AND NOT deleted;`
+	var exists bool
+	var err error
+	for i := 0; i < retries; i++ {
+		err = requester.GetContext(ctx, &exists, query, user.Phone)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return false, nil
+		case err != nil:
+			continue
+		}
+		return true, nil
 	}
-	return true
+	return false, err
 }
 
 func (s *Store) GetUserByPhone(ctx context.Context, phone string) (models.User, error) {
@@ -152,6 +177,15 @@ WHERE id = $1 AND NOT deleted;`
 }
 
 func (s *Store) UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return models.User{}, fmt.Errorf("err opening transaction: %w", err)
+	}
+	defer func() {
+		if err = tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			s.log.Warnf("err rolling back transaction %v", err)
+		}
+	}()
 	var updatedUser models.User
 	var args []interface{}
 	var query strings.Builder
@@ -175,9 +209,8 @@ func (s *Store) UpdateUser(ctx context.Context, id int, user models.UserRequest)
 	args = append(args, id)
 	query.WriteString(fmt.Sprintf(` updated_at = NOW() WHERE id = $%d
 RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at;`, len(args)))
-	var err error
 	for i := 0; i < retries; i++ {
-		err = s.db.GetContext(ctx, &updatedUser, query.String(), args...)
+		err = tx.GetContext(ctx, &updatedUser, query.String(), args...)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return models.User{}, ErrUserNotFound
@@ -218,8 +251,7 @@ VALUES ($1, $2, $3, $4)
 RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
-		if err = s.db.QueryRowxContext(ctx, query, meeting.Manager, meeting.StartTime, meeting.EndTime, meeting.Client).
-			StructScan(&newMeeting); err != nil {
+		if err = s.db.GetContext(ctx, &newMeeting, query, meeting.Manager, meeting.StartTime, meeting.EndTime, meeting.Client); err != nil {
 			continue
 		}
 		return newMeeting, err
@@ -259,6 +291,15 @@ WHERE id = $1;`
 }
 
 func (s *Store) UpdateMeeting(ctx context.Context, id int, meeting models.MeetingRequest) (models.Meeting, error) {
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return models.Meeting{}, fmt.Errorf("err opening transaction %w", err)
+	}
+	defer func() {
+		if err = tx.Rollback(); err != nil && errors.Is(err, sql.ErrTxDone) {
+			s.log.Warnf("err rolling back transaction %v", err)
+		}
+	}()
 	var updatedMeeting models.Meeting
 	var args []interface{}
 	var query strings.Builder
@@ -282,9 +323,8 @@ func (s *Store) UpdateMeeting(ctx context.Context, id int, meeting models.Meetin
 	args = append(args, id)
 	query.WriteString(fmt.Sprintf(` updated_at = NOW() WHERE id = $%d
 RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`, len(args)))
-	var err error
 	for i := 0; i < retries; i++ {
-		err = s.db.GetContext(ctx, &updatedMeeting, query.String(), args...)
+		err = tx.GetContext(ctx, &updatedMeeting, query.String(), args...)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return models.Meeting{}, ErrMeetingNotFound
