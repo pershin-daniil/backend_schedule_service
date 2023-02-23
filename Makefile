@@ -1,7 +1,7 @@
 lint:
 	gofumpt -w .
 	go mod tidy
-	golangci-lint run ./...
+	golangci-lint run
 
 up:
 	docker-compose up -d

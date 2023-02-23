@@ -71,6 +71,7 @@ func (s *Server) Run(ctx context.Context) error {
 		<-ctx.Done()
 		gfCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		//nolint:contextcheck
 		if err := s.server.Shutdown(gfCtx); err != nil {
 			s.log.Warnf("err shutting down properly")
 		}
