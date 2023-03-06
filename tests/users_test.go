@@ -51,7 +51,7 @@ type IntegrationTestSuite struct {
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
-	s.log = logger.NewLogger()
+	s.log = logger.New()
 	var err error
 
 	var (
@@ -85,15 +85,15 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	}
 
 	ctx := context.Background()
-	s.store, err = pgstore.NewStore(ctx, s.log, pgDSN)
+	s.store, err = pgstore.New(ctx, s.log, pgDSN)
 	s.Require().NoError(err)
 	err = s.store.Migrate(migrate.Up)
 	s.Require().NoError(err)
-	s.notifier = notifier.NewDummyNotifier(s.log)
+	s.notifier = notifier.New(s.log)
 	s.app = service.NewScheduleService(s.log, s.store, s.notifier)
 	s.Require().NoError(err)
 
-	s.handler = rest.NewServer(s.log, s.app, address, version)
+	s.handler = rest.New(s.log, s.app, address, version)
 	go func() {
 		_ = s.handler.Run(ctx)
 	}()

@@ -10,7 +10,7 @@ CREATE TABLE users
     phone         varchar     NOT NULL UNIQUE,
     email         varchar,
     password_hash varchar     NOT NULL,
-    role          varchar     NOT NULL,
+    role          varchar     NOT NULL DEFAULT 'client',
     deleted       bool        NOT NULL DEFAULT FALSE,
     updated_at    timestamptz NOT NULL DEFAULT NOW(),
     created_at    timestamptz NOT NULL DEFAULT NOW()

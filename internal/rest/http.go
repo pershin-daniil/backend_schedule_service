@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/sirupsen/logrus"
 )
@@ -28,7 +29,7 @@ type Server struct {
 //go:embed private_rsa.pub
 var publicSigningKey []byte
 
-func NewServer(log *logrus.Logger, app App, address, version string) *Server {
+func New(log *logrus.Logger, app App, address, version string) *Server {
 	s := Server{
 		log:       log.WithField("component", "rest"),
 		address:   address,
@@ -39,6 +40,7 @@ func NewServer(log *logrus.Logger, app App, address, version string) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Get("/version", s.versionHandler)
+	r.Get("/metrics", promhttp.Handler().ServeHTTP)
 	r.Route("/api", func(r chi.Router) {
 		r.Use(middleware.RequestLogger(&middleware.DefaultLogFormatter{Logger: s.log, NoColor: true}))
 		r.Route("/v1", func(r chi.Router) {
