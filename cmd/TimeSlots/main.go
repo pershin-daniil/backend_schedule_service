@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"github.com/pershin-daniil/TimeSlots/internal/telegram"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/pershin-daniil/TimeSlots/internal/telegram"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/service"
 	migrate "github.com/rubenv/sql-migrate"
@@ -39,7 +40,7 @@ func main() {
 	if err = store.Migrate(migrate.Up); err != nil {
 		log.Panic(err)
 	}
-	tg, err := telegram.NewTelegram(log, tgToken)
+	tg, err := telegram.New(log, tgToken)
 	if err != nil {
 		log.Panic(err)
 	}
