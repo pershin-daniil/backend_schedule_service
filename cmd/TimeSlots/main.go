@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"github.com/pershin-daniil/TimeSlots/internal/telegram"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
-	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
 	"github.com/pershin-daniil/TimeSlots/pkg/service"
 	migrate "github.com/rubenv/sql-migrate"
 
@@ -21,23 +22,29 @@ const (
 	version = "0.0.1"
 )
 
-var pgDSN = lookupEnv("PG_DSN", "postgres://postgres:secret@localhost:6431/timeslots?sslmode=disable")
+var (
+	pgDSN   = lookupEnv("PG_DSN", "postgres://postgres:secret@localhost:6431/timeslots?sslmode=disable")
+	tgToken = os.Getenv("TG_TOKEN")
+)
 
 func main() {
-	log := logger.NewLogger()
+	log := logger.New()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	store, err := pgstore.NewStore(ctx, log, pgDSN)
+	store, err := pgstore.New(ctx, log, pgDSN)
 	if err != nil {
 		log.Panic(err)
 	}
 	if err = store.Migrate(migrate.Up); err != nil {
 		log.Panic(err)
 	}
-	dummy := notifier.NewDummyNotifier(log)
-	app := service.NewScheduleService(log, store, dummy)
-	server := rest.NewServer(log, app, address, version)
+	tg, err := telegram.NewTelegram(log, tgToken)
+	if err != nil {
+		log.Panic(err)
+	}
+	app := service.NewScheduleService(log, store, tg)
+	server := rest.New(log, app, address, version)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
@@ -45,9 +52,20 @@ func main() {
 		log.Info("Received signal, shutting down...")
 		cancel()
 	}()
-	if err = server.Run(ctx); err != nil {
-		log.Panic(err)
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tg.Run(ctx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err = server.Run(ctx); err != nil {
+			log.Panic(err)
+		}
+	}()
+	wg.Wait()
 	log.Info("Server stopped")
 }
 

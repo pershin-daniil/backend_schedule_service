@@ -10,7 +10,7 @@ type DummyNotifier struct {
 	log *logrus.Entry
 }
 
-func NewDummyNotifier(log *logrus.Logger) *DummyNotifier {
+func New(log *logrus.Logger) *DummyNotifier {
 	return &DummyNotifier{
 		log: log.WithField("component", "notifier"),
 	}

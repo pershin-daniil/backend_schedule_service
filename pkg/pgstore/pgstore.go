@@ -6,7 +6,9 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/pershin-daniil/TimeSlots/pkg/metrics"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -30,7 +32,7 @@ var (
 	ErrUserExists      = fmt.Errorf("user already exists")
 )
 
-func NewStore(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
+func New(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
 	db, err := sqlx.ConnectContext(ctx, "pgx", dsn)
 	if err != nil {
 		return nil, err
@@ -70,6 +72,10 @@ func (s *Store) Migrate(direction migrate.MigrationDirection) error {
 }
 
 func (s *Store) GetUsers(ctx context.Context) ([]models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUsers").Observe(time.Since(started).Seconds())
+	}()
 	var users []models.User
 	var err error
 	query := `SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
@@ -80,19 +86,27 @@ WHERE NOT deleted;`
 		}
 		return users, nil
 	}
-	return nil, err
+	metrics.PgErrCount.WithLabelValues("GetUsers").Inc()
+
+	return nil, fmt.Errorf("get users failed: %w", err)
 }
 
 func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUser").Observe(time.Since(started).Seconds())
+	}()
+
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return models.User{}, fmt.Errorf("err openning transaction: %w", err)
+		return models.User{}, fmt.Errorf("create user failed: %w", err)
 	}
 	defer func() {
 		if err = tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			s.log.Warnf("err rolling back transaction %v", err)
+			s.log.Warnf("create user failed: %v", err)
 		}
 	}()
+
 	exists, err := s.userExists(ctx, tx, user)
 	if err != nil {
 		return models.User{}, err
@@ -105,13 +119,16 @@ func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models
 INSERT INTO users (last_name, first_name, phone, email, password_hash, role)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash, role;`
+
 	for i := 0; i < retries; i++ {
 		if err = s.db.GetContext(ctx, &createdUser, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role); err != nil {
 			continue
 		}
 		return createdUser, nil
 	}
-	return models.User{}, fmt.Errorf("err creating users: %w", err)
+	metrics.PgErrCount.WithLabelValues("GetUser").Inc()
+
+	return models.User{}, fmt.Errorf("create user failed: %w", err)
 }
 
 type requester interface {
@@ -124,6 +141,7 @@ SELECT TRUE FROM users
 WHERE phone=$1 AND NOT deleted;`
 	var exists bool
 	var err error
+
 	for i := 0; i < retries; i++ {
 		err = requester.GetContext(ctx, &exists, query, user.Phone)
 		switch {
@@ -134,10 +152,17 @@ WHERE phone=$1 AND NOT deleted;`
 		}
 		return true, nil
 	}
+	metrics.PgErrCount.WithLabelValues("userExists").Inc()
+
 	return false, err
 }
 
 func (s *Store) GetUserByPhone(ctx context.Context, phone string) (models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUserByPhone").Observe(time.Since(started).Seconds())
+	}()
+
 	var user models.User
 	query := `
 SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, phone, password_hash, role
@@ -154,10 +179,17 @@ WHERE phone = $1 AND NOT deleted;`
 		}
 		return user, nil
 	}
-	return models.User{}, fmt.Errorf("err getting user by phone (%s): %w", phone, err)
+	metrics.PgErrCount.WithLabelValues("GetUserByPhone").Inc()
+
+	return models.User{}, fmt.Errorf("get user by phone (%s) faild: %w", phone, err)
 }
 
 func (s *Store) GetUser(ctx context.Context, id int) (models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUser").Observe(time.Since(started).Seconds())
+	}()
+
 	var user models.User
 	query := `
 SELECT id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at FROM users
@@ -173,19 +205,27 @@ WHERE id = $1 AND NOT deleted;`
 		}
 		return user, nil
 	}
-	return models.User{}, fmt.Errorf("err getting user %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("GetUser").Inc()
+
+	return models.User{}, fmt.Errorf("get user %d faild: %w", id, err)
 }
 
 func (s *Store) UpdateUser(ctx context.Context, id int, user models.UserRequest) (models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("UpdateUser").Observe(time.Since(started).Seconds())
+	}()
+
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return models.User{}, fmt.Errorf("err opening transaction: %w", err)
+		return models.User{}, fmt.Errorf("open transaction faild: %w", err)
 	}
 	defer func() {
 		if err = tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			s.log.Warnf("err rolling back transaction %v", err)
+			s.log.Warnf("rollback transaction faild: %v", err)
 		}
 	}()
+
 	var updatedUser models.User
 	var args []interface{}
 	var query strings.Builder
@@ -219,10 +259,17 @@ RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, update
 		}
 		return updatedUser, nil
 	}
-	return models.User{}, fmt.Errorf("err updating user %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("UpdateUser").Inc()
+
+	return models.User{}, fmt.Errorf("update user %d faild: %w", id, err)
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int) (models.User, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("DeleteUser").Observe(time.Since(started).Seconds())
+	}()
+
 	var deletedUser models.User
 	query := `
 UPDATE users
@@ -240,10 +287,17 @@ RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, delete
 		}
 		return deletedUser, err
 	}
-	return models.User{}, fmt.Errorf("err deleting user %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("DeleteUser").Inc()
+
+	return models.User{}, fmt.Errorf("delete user %d faild: %w", id, err)
 }
 
 func (s *Store) CreateMeeting(ctx context.Context, meeting models.MeetingRequest) (models.Meeting, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("CreateMeeting").Observe(time.Since(started).Seconds())
+	}()
+
 	var newMeeting models.Meeting
 	query := `
 INSERT INTO meetings (manager, start_at, end_at, client)
@@ -256,10 +310,17 @@ RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`
 		}
 		return newMeeting, err
 	}
-	return models.Meeting{}, err
+	metrics.PgErrCount.WithLabelValues("CreateMeeting").Inc()
+
+	return models.Meeting{}, fmt.Errorf("create meeting faild: %w", err)
 }
 
 func (s *Store) GetMeetings(ctx context.Context) ([]models.Meeting, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetMeetings").Observe(time.Since(started).Seconds())
+	}()
+
 	var meetings []models.Meeting
 	var err error
 	for i := 0; i < retries; i++ {
@@ -268,10 +329,17 @@ func (s *Store) GetMeetings(ctx context.Context) ([]models.Meeting, error) {
 		}
 		return meetings, nil
 	}
-	return nil, err
+	metrics.PgErrCount.WithLabelValues("GetMeetings").Inc()
+
+	return nil, fmt.Errorf("get meetings faild: %w", err)
 }
 
 func (s *Store) GetMeeting(ctx context.Context, id int) (models.Meeting, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetMeeting").Observe(time.Since(started).Seconds())
+	}()
+
 	var meeting models.Meeting
 	query := `
 SELECT id, manager, start_at, end_at, client, updated_at, created_at FROM meetings
@@ -287,19 +355,27 @@ WHERE id = $1;`
 		}
 		return meeting, nil
 	}
-	return models.Meeting{}, fmt.Errorf("err getting meeting %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("GetMeeting").Inc()
+
+	return models.Meeting{}, fmt.Errorf("get meeting %d faild: %w", id, err)
 }
 
 func (s *Store) UpdateMeeting(ctx context.Context, id int, meeting models.MeetingRequest) (models.Meeting, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("UpdateMeeting").Observe(time.Since(started).Seconds())
+	}()
+
 	tx, err := s.db.Beginx()
 	if err != nil {
-		return models.Meeting{}, fmt.Errorf("err opening transaction %w", err)
+		return models.Meeting{}, fmt.Errorf("open transaction faild: %w", err)
 	}
 	defer func() {
 		if err = tx.Rollback(); err != nil && errors.Is(err, sql.ErrTxDone) {
-			s.log.Warnf("err rolling back transaction %v", err)
+			s.log.Warnf("rollback transaction faild: %v", err)
 		}
 	}()
+
 	var updatedMeeting models.Meeting
 	var args []interface{}
 	var query strings.Builder
@@ -333,12 +409,18 @@ RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`, len(a
 		}
 		return updatedMeeting, nil
 	}
-	return models.Meeting{}, fmt.Errorf("err updating meeting %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("UpdateMeeting").Inc()
+
+	return models.Meeting{}, fmt.Errorf("update meeting %d faild: %w", id, err)
 }
 
 func (s *Store) DeleteMeeting(ctx context.Context, id int) (models.Meeting, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("DeleteMeeting").Observe(time.Since(started).Seconds())
+	}()
+
 	var deletedMeeting models.Meeting
-	// TODO: don't delete History
 	var deletedHistory interface{}
 	query := `
 DELETE FROM meetings
@@ -360,7 +442,9 @@ RETURNING NULL;
 		}
 		return deletedMeeting, nil
 	}
-	return models.Meeting{}, fmt.Errorf("err deleting meeting %d: %w", id, err)
+	metrics.PgErrCount.WithLabelValues("DeleteMeeting").Inc()
+
+	return models.Meeting{}, fmt.Errorf("delete meeting %d faild: %w", id, err)
 }
 
 func (s *Store) ResetTables(ctx context.Context, tables []string) error {
