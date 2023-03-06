@@ -1,3 +1,6 @@
 package telegram
 
-const CommandHello = "/hello"
+const (
+	cmdStart = "/start"
+	cmdInfo  = "/info"
+)

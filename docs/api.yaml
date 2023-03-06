@@ -1,0 +1,236 @@
+openapi: 3.0.0
+info:
+  title: TimeSlots
+  description: >-
+    This is a service that provides a way to schedule appointments.
+  contact:
+    email: dev@pershin-daniil.ru
+  version: 0.0.1
+externalDocs:
+  description: GitHub
+  url: https://github.com/pershin-daniil/TimeSlots
+servers:
+  - url: https://localhost:8080/api/v1
+paths:
+  /login:
+    post:
+      tags:
+        - login
+      summary: Logs user into the system
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+  /users:
+    get:
+      tags:
+        - user
+      summary: Get list of all users.
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+    post:
+      tags:
+        - user
+      summary: Create user
+      requestBody:
+        description: Created user object
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        201:
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /users/{id}:
+    get:
+      tags:
+        - user
+      summary: Get user by id
+      parameters:
+        - name: id
+          in: path
+          description: id of user to be got
+          required: true
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+    patch:
+      tags:
+        - user
+      summary: Update user
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+    delete:
+      tags:
+        - user
+      summary: Delete user
+      parameters:
+        - name: id
+          in: path
+          description: id that need to be deleted
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+  /meetings:
+    get:
+      tags:
+        - meeting
+      summary: Get list of all meetings
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+        401:
+          description: Unauthorized
+    post:
+      tags:
+        - meeting
+      summary: Create new meeting
+      description: Manager should be with claims role "coach".
+      responses:
+        201:
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+  /meetings/{id}:
+    get:
+      tags:
+        - meeting
+      summary: Get meeting
+      parameters:
+        - name: id
+          in: path
+          description: id that need to be got
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+    patch:
+      tags:
+        - meeting
+      summary: Update meeting
+      parameters:
+        - name: id
+          in: path
+          description: id that need to be updated
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+    delete:
+      tags:
+        - meeting
+      summary: Delete meeting
+      parameters:
+        - name: id
+          in: path
+          description: id that need to be deleted
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 10
+        lastName:
+          type: string
+          example: James
+        firstName:
+          type: string
+          example: John
+        phone:
+          type: string
+          example: '12345'
+        email:
+          type: string
+          example: john@email.com
+        password:
+          type: string
+          example: '12345'
+      xml:
+        name: user
+    Meeting:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 3
+        manager:
+          type: integer
+          format: int64
+          example: 432
+        startAt:
+          type: object
+          example: {year: 2023, month: 12, day: 10, hour: 10, min: 30, sec: 00, nsec: 00}
+        endAt:
+          type: object
+          example: { year: 2023, month: 12, day: 10, hour: 11, min: 30, sec: 00, nsec: 00 }
+        client:
+          type: integer
+          format: int64
+          example: 123
+      xml:
+        name: tag
+  securitySchemes:
+    api_key:
+      type: apiKey
+      name: Authorization
+      in: header

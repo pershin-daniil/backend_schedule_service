@@ -6,9 +6,10 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"github.com/pershin-daniil/TimeSlots/pkg/metrics"
 	"strings"
 	"time"
+
+	"github.com/pershin-daniil/TimeSlots/pkg/metrics"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
