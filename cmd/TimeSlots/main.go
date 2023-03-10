@@ -40,11 +40,16 @@ func main() {
 	if err = store.Migrate(migrate.Up); err != nil {
 		log.Panic(err)
 	}
-	tg, err := telegram.New(log, tgToken)
+	tgBot, err := telegram.NewBot(tgToken)
 	if err != nil {
 		log.Panic(err)
 	}
-	app := service.NewScheduleService(log, store, tg)
+	tgNotifier := telegram.NewNotifier(log, tgBot)
+	app := service.NewScheduleService(log, store, tgNotifier)
+	tg, err := telegram.New(log, tgBot, app)
+	if err != nil {
+		log.Panic(err)
+	}
 	server := rest.New(log, app, address, version)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
