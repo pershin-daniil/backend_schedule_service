@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pershin-daniil/TimeSlots/pkg/models"
+
 	"github.com/sirupsen/logrus"
 	tele "gopkg.in/telebot.v3"
 )
@@ -12,9 +14,37 @@ import (
 type Telegram struct {
 	log *logrus.Entry
 	bot *tele.Bot
+	app App
 }
 
-func New(log *logrus.Logger, token string) (*Telegram, error) {
+type Notifier struct {
+	log *logrus.Entry
+	bot *tele.Bot
+}
+
+type App interface {
+	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
+}
+
+func NewNotifier(log *logrus.Logger, bot *tele.Bot) *Notifier {
+	return &Notifier{
+		log: log.WithField("component", "notifier"),
+		bot: bot,
+	}
+}
+
+func New(log *logrus.Logger, bot *tele.Bot, app App) (*Telegram, error) {
+	t := Telegram{
+		log: log.WithField("component", "telegram"),
+		bot: bot,
+		app: app,
+	}
+	t.initButtons()
+	t.initHandlers()
+	return &t, nil
+}
+
+func NewBot(token string) (*tele.Bot, error) {
 	config := tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -23,16 +53,10 @@ func New(log *logrus.Logger, token string) (*Telegram, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new bot faild: %w", err)
 	}
-	t := Telegram{
-		log: logrus.WithField("component", "telegram"),
-		bot: b,
-	}
-	t.initButtons()
-	t.initHandlers()
-	return &t, nil
+	return b, nil
 }
 
-func (t *Telegram) Notify(ctx context.Context, msg string, user interface{}) error {
+func (t *Notifier) Notify(ctx context.Context, msg string, user interface{}) error {
 	t.log.Infof("Notification: %v %v", msg, user)
 	return nil
 }

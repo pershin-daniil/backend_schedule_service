@@ -3,6 +3,9 @@ package telegram
 import (
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/pershin-daniil/TimeSlots/pkg/models"
+
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -36,7 +39,20 @@ func (t *Telegram) startHandler(ctx tele.Context) error {
 	msg := `Вступительная речь
 Предложение продолжить`
 	// TODO: проверка на существование пользователя
+	parseUserRequest(ctx)
 	return ctx.Send(msg, registration)
+}
+
+func parseUserRequest(ctx tele.Context) models.UserRequest {
+	password := uuid.New().String()
+	role := models.RoleClient
+
+	return models.UserRequest{
+		LastName:  &ctx.Sender().LastName,
+		FirstName: &ctx.Sender().FirstName,
+		Role:      &role,
+		Password:  &password,
+	}
 }
 
 func (t *Telegram) registrationHandler(ctx tele.Context) error {
