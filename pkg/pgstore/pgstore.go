@@ -422,18 +422,12 @@ func (s *Store) DeleteMeeting(ctx context.Context, id int) (models.Meeting, erro
 	}()
 
 	var deletedMeeting models.Meeting
-	var deletedHistory interface{}
 	query := `
 DELETE FROM meetings
 WHERE id = $1
 RETURNING id, manager, start_at, end_at, client, updated_at, created_at;`
 	var err error
 	for i := 0; i < retries; i++ {
-		_ = s.db.GetContext(ctx, &deletedHistory, `
-DELETE FROM meetings_history
-WHERE meetings_id = $1
-RETURNING NULL;
-`, id)
 		err = s.db.GetContext(ctx, &deletedMeeting, query, id)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -446,6 +440,56 @@ RETURNING NULL;
 	metrics.PgErrCount.WithLabelValues("DeleteMeeting").Inc()
 
 	return models.Meeting{}, fmt.Errorf("delete meeting %d faild: %w", id, err)
+}
+
+func (s *Store) UsersWithMeetings(ctx context.Context) ([]models.UserNotify, error) {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("GetUsersForNotification").Observe(time.Since(started).Seconds())
+	}()
+
+	var result []models.UserNotify
+	query := `
+SELECT users.id, m.id, notified, last_name, first_name, start_at FROM users
+JOIN meetings m on users.id = m.client
+WHERE now() < start_at + users.notification
+AND NOT notified`
+	var err error
+	for i := 0; i < retries; i++ {
+		if err = s.db.SelectContext(ctx, &result, query); err != nil {
+			continue
+		}
+		return result, nil
+	}
+	metrics.PgErrCount.WithLabelValues("UsersWithMeeting").Inc()
+
+	return nil, fmt.Errorf("get users with meetings faild: %w", err)
+}
+
+func (s *Store) SwitchNotificationStatus(ctx context.Context, meetingID int) error {
+	started := time.Now()
+	defer func() {
+		metrics.PgDuration.WithLabelValues("SwitchNotificationStatus").Observe(time.Since(started).Seconds())
+	}()
+
+	var result bool
+	query := `
+UPDATE meetings SET
+notified = true
+WHERE id = $1
+RETURNING TRUE;`
+	var err error
+	for i := 0; i < retries; i++ {
+		if err = s.db.GetContext(ctx, &result, query, meetingID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if result || errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+	}
+	metrics.PgErrCount.WithLabelValues("SwitchNotificationStatus").Inc()
+
+	return fmt.Errorf("switch notification status faild: %w", err)
 }
 
 func (s *Store) ResetTables(ctx context.Context, tables []string) error {
