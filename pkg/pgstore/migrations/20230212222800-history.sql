@@ -22,6 +22,7 @@ CREATE TABLE meetings_history
     start_at timestamptz NOT NULL,
     end_at timestamptz NOT NULL,
     client int,
+    notified bool,
     event_time timestamptz NOT NULL DEFAULT NOW(),
     created_at timestamptz NOT NULL DEFAULT NOW()
 );
@@ -44,8 +45,8 @@ CREATE OR REPLACE FUNCTION meetings_history()
     RETURNS TRIGGER AS
 $$
 BEGIN
-    INSERT INTO meetings_history (meetings_id, manager, start_at, end_at, client, event_time, created_at)
-    VALUES (NEW.id, NEW.manager, NEW.start_at, NEW.end_at, NEW.client, NOW(), NEW.created_at);
+    INSERT INTO meetings_history (meetings_id, manager, start_at, end_at, client, notified, event_time, created_at)
+    VALUES (NEW.id, NEW.manager, NEW.start_at, NEW.end_at, NEW.client, NEW.notified, NOW(), NEW.created_at);
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;

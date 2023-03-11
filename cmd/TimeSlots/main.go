@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/pershin-daniil/TimeSlots/pkg/worker"
 	"os"
 	"os/signal"
 	"sync"
@@ -51,6 +52,7 @@ func main() {
 		log.Panic(err)
 	}
 	server := rest.New(log, app, address, version)
+	notifyUsers := worker.New(log, store, tgNotifier)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
@@ -68,6 +70,13 @@ func main() {
 	go func() {
 		defer wg.Done()
 		if err = server.Run(ctx); err != nil {
+			log.Panic(err)
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err = notifyUsers.SendNotificationBeforeTraining(ctx); err != nil {
 			log.Panic(err)
 		}
 	}()

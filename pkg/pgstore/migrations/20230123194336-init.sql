@@ -12,6 +12,7 @@ CREATE TABLE users
     password_hash varchar     NOT NULL,
     role          varchar     NOT NULL DEFAULT 'client',
     deleted       bool        NOT NULL DEFAULT FALSE,
+    notification  time        DEFAULT '01:00:00',
     updated_at    timestamptz NOT NULL DEFAULT NOW(),
     created_at    timestamptz NOT NULL DEFAULT NOW()
 );
@@ -25,6 +26,7 @@ CREATE TABLE meetings
     start_at   timestamptz NOT NULL,
     end_at     timestamptz NOT NULL,
     client     int         NOT NULL REFERENCES users (id),
+    notified   bool        NOT NULL DEFAULT FALSE,
     updated_at timestamptz NOT NULL DEFAULT NOW(),
     created_at timestamptz NOT NULL DEFAULT NOW()
 );

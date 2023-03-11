@@ -8,6 +8,7 @@ type MeetingRequest struct {
 	StartTime *time.Time `json:"startTime" db:"start_at"`
 	EndTime   *time.Time `json:"endTime" db:"end_at"`
 	Client    *int       `json:"client" db:"client"`
+	Notified  *bool      `json:"notified" db:"notified"`
 }
 
 type Meeting struct {
@@ -16,6 +17,7 @@ type Meeting struct {
 	StartTime time.Time `json:"startTime" db:"start_at"`
 	EndTime   time.Time `json:"endTime" db:"end_at"`
 	Client    int       `json:"client" db:"client"`
+	Notified  bool      `json:"notified" db:"notified"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
