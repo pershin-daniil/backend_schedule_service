@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"github.com/pershin-daniil/TimeSlots/pkg/worker"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
+
+	"github.com/pershin-daniil/TimeSlots/pkg/worker"
 
 	"github.com/pershin-daniil/TimeSlots/internal/telegram"
 
@@ -45,14 +48,14 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
-	tgNotifier := telegram.NewNotifier(log, tgBot)
-	app := service.NewScheduleService(log, store, tgNotifier)
+	ntf := notifier.New(log, tgBot)
+	app := service.NewScheduleService(log, store)
 	tg, err := telegram.New(log, tgBot, app)
 	if err != nil {
 		log.Panic(err)
 	}
 	server := rest.New(log, app, address, version)
-	notifyUsers := worker.New(log, store, tgNotifier)
+	notifyUsers := worker.New(log, store, ntf)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)

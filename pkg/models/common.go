@@ -15,8 +15,8 @@ const (
 )
 
 type UserNotify struct {
-	UserID    int       `json:"userID" db:"users.id"`
-	MeetingID int       `json:"meetingID" db:"id"`
+	UserID    int       `json:"userID" db:"user_id"`
+	MeetingID int       `json:"meetingID" db:"meeting_id"`
 	Notified  bool      `json:"notified" db:"notified"`
 	LastName  string    `json:"lastName" db:"last_name"`
 	FirstName string    `json:"firstName" db:"first_name"`

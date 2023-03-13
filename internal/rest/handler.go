@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
 	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
-	"github.com/pershin-daniil/TimeSlots/pkg/service"
 )
 
 type App interface {
@@ -27,7 +26,6 @@ type App interface {
 	GetMeeting(ctx context.Context, id int) (models.Meeting, error)
 	UpdateMeeting(ctx context.Context, id int, meeting models.MeetingRequest) (models.Meeting, error)
 	DeleteMeeting(ctx context.Context, id int) (models.Meeting, error)
-	service.Notifier
 	Login(ctx context.Context, login, password string) (string, error)
 }
 

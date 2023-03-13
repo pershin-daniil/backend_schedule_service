@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
+
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
-	"github.com/pershin-daniil/TimeSlots/pkg/service"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,10 +26,10 @@ type Store interface {
 type Worker struct {
 	log      *logrus.Logger
 	store    Store
-	notifier service.Notifier
+	notifier *notifier.Notifier
 }
 
-func New(log *logrus.Logger, store Store, notifier service.Notifier) *Worker {
+func New(log *logrus.Logger, store Store, notifier *notifier.Notifier) *Worker {
 	return &Worker{
 		log:      log,
 		store:    store,
@@ -52,7 +53,7 @@ func (w *Worker) SendNotificationBeforeTraining(ctx context.Context) error {
 				continue
 			}
 			msg := fmt.Sprintf("У вас тренировка в %s", user.StartAt.String())
-			if err = w.notifier.Notify(ctx, msg, user); err != nil {
+			if err = w.notifier.NotifyTelegram(ctx, msg, user); err != nil {
 				return fmt.Errorf("worker send notification faild: %w", err)
 			}
 			if err = w.store.SwitchNotificationStatus(ctx, user.MeetingID); err != nil {

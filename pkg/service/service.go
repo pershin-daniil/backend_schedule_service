@@ -17,10 +17,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Notifier interface {
-	Notify(ctx context.Context, message string, user interface{}) error
-}
-
 type Store interface {
 	GetUsers(ctx context.Context) ([]models.User, error)
 	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
@@ -42,15 +38,13 @@ var privateSigningKey []byte
 type ScheduleService struct {
 	log        *logrus.Entry
 	store      Store
-	notifier   Notifier
 	privateKey *rsa.PrivateKey
 }
 
-func NewScheduleService(log *logrus.Logger, store Store, notifier Notifier) *ScheduleService {
+func NewScheduleService(log *logrus.Logger, store Store) *ScheduleService {
 	s := ScheduleService{
 		log:        log.WithField("component", "service"),
 		store:      store,
-		notifier:   notifier,
 		privateKey: mustGetPrivateKey(privateSigningKey),
 	}
 	return &s
@@ -66,9 +60,6 @@ func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserReques
 	newUser, err := s.store.CreateUser(ctx, user)
 	if err != nil {
 		return models.User{}, fmt.Errorf("err creating user: %w", err)
-	}
-	if err = s.notifier.Notify(ctx, "user created", user.ID); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
 	}
 	return newUser, nil
 }
@@ -86,9 +77,6 @@ func (s *ScheduleService) GetUser(ctx context.Context, id int) (models.User, err
 	if err != nil {
 		return models.User{}, fmt.Errorf("err getting user (id %d) from store: %w", id, err)
 	}
-	if err = s.notifier.Notify(ctx, "user", user); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
-	}
 	return user, nil
 }
 
@@ -96,9 +84,6 @@ func (s *ScheduleService) UpdateUser(ctx context.Context, id int, data models.Us
 	updatedUser, err := s.store.UpdateUser(ctx, id, data)
 	if err != nil {
 		return models.User{}, fmt.Errorf("err updating user (id %d) from store: %w", id, err)
-	}
-	if err = s.notifier.Notify(ctx, "user updated", updatedUser); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
 	}
 	return updatedUser, nil
 }
@@ -108,9 +93,6 @@ func (s *ScheduleService) DeleteUser(ctx context.Context, id int) (models.User, 
 	if err != nil {
 		return models.User{}, fmt.Errorf("err deleting user (id %d) from store: %w", id, err)
 	}
-	if err = s.notifier.Notify(ctx, "user deleted", deletedUser); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
-	}
 	return deletedUser, nil
 }
 
@@ -118,9 +100,6 @@ func (s *ScheduleService) CreateMeeting(ctx context.Context, meeting models.Meet
 	createdMeeting, err := s.store.CreateMeeting(ctx, meeting)
 	if err != nil {
 		return models.Meeting{}, fmt.Errorf("err creating meeting: %w", err)
-	}
-	if err = s.notifier.Notify(ctx, "meeting created", createdMeeting); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
 	}
 	return createdMeeting, nil
 }
@@ -138,9 +117,6 @@ func (s *ScheduleService) GetMeeting(ctx context.Context, id int) (models.Meetin
 	if err != nil {
 		return models.Meeting{}, fmt.Errorf("err getting meeting (id %d) from store: %w", id, err)
 	}
-	if err = s.notifier.Notify(ctx, "meeting", meeting); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
-	}
 	return meeting, nil
 }
 
@@ -149,9 +125,6 @@ func (s *ScheduleService) UpdateMeeting(ctx context.Context, id int, data models
 	if err != nil {
 		return models.Meeting{}, fmt.Errorf("err updating meeting (id %d) from store: %w", id, err)
 	}
-	if err = s.notifier.Notify(ctx, "meeting updated", updatedMeeting); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
-	}
 	return updatedMeeting, nil
 }
 
@@ -159,9 +132,6 @@ func (s *ScheduleService) DeleteMeeting(ctx context.Context, id int) (models.Mee
 	deletedMeeting, err := s.store.DeleteMeeting(ctx, id)
 	if err != nil {
 		return models.Meeting{}, fmt.Errorf("err deleting meeting (id %d) from store: %w", id, err)
-	}
-	if err = s.notifier.Notify(ctx, "meeting deleted", deletedMeeting); err != nil {
-		s.log.Errorf("err notifying user: %v", err)
 	}
 	return deletedMeeting, nil
 }
@@ -201,8 +171,4 @@ func mustGetPrivateKey(keyBytes []byte) *rsa.PrivateKey {
 		panic(err)
 	}
 	return key
-}
-
-func (s *ScheduleService) Notify(ctx context.Context, message string, user interface{}) error {
-	return s.notifier.Notify(ctx, message, user)
 }

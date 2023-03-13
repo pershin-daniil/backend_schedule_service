@@ -17,20 +17,8 @@ type Telegram struct {
 	app App
 }
 
-type Notifier struct {
-	log *logrus.Entry
-	bot *tele.Bot
-}
-
 type App interface {
 	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
-}
-
-func NewNotifier(log *logrus.Logger, bot *tele.Bot) *Notifier {
-	return &Notifier{
-		log: log.WithField("component", "notifier"),
-		bot: bot,
-	}
 }
 
 func New(log *logrus.Logger, bot *tele.Bot, app App) (*Telegram, error) {
@@ -54,11 +42,6 @@ func NewBot(token string) (*tele.Bot, error) {
 		return nil, fmt.Errorf("new bot faild: %w", err)
 	}
 	return b, nil
-}
-
-func (t *Notifier) Notify(ctx context.Context, msg string, user interface{}) error {
-	t.log.Infof("Notification: %v %v", msg, user)
-	return nil
 }
 
 func (t *Telegram) Run(ctx context.Context) {

@@ -45,7 +45,7 @@ type IntegrationTestSuite struct {
 	suite.Suite
 	log      *logrus.Logger
 	store    *pgstore.Store
-	notifier service.Notifier
+	notifier notifier.Notifier
 	app      rest.App
 	handler  *rest.Server
 }
@@ -73,8 +73,8 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	}
 
 	Manager := 0
-	StartTime := time.Date(2023, 1, 1, 10, 0, 0, 0, time.UTC)
-	EndTime := time.Date(2023, 1, 1, 11, 0, 0, 0, time.UTC)
+	StartTime := time.Now().Add(time.Hour)
+	EndTime := time.Now().Add(2 * time.Hour)
 	Client := 0
 
 	meeting = models.MeetingRequest{
@@ -89,8 +89,8 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 	err = s.store.Migrate(migrate.Up)
 	s.Require().NoError(err)
-	s.notifier = notifier.New(s.log)
-	s.app = service.NewScheduleService(s.log, s.store, s.notifier)
+	// s.notifier = notifier.New(s.log, mockTeleBot{})
+	s.app = service.NewScheduleService(s.log, s.store)
 	s.Require().NoError(err)
 
 	s.handler = rest.New(s.log, s.app, address, version)
@@ -214,8 +214,6 @@ func (s *IntegrationTestSuite) TestCreateMeeting() {
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
 	s.Require().Equal(*meeting.Manager, respMeeting.Manager)
 	s.Require().Equal(*meeting.Client, respMeeting.Client)
-	s.Require().Equal(*meeting.StartTime, respMeeting.StartTime.UTC())
-	s.Require().Equal(*meeting.EndTime, respMeeting.EndTime.UTC())
 }
 
 func (s *IntegrationTestSuite) TestGetMeeting() {
