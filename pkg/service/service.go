@@ -90,15 +90,6 @@ func (s *ScheduleService) StartNotificationWorker(ctx context.Context) error {
 			}
 		}
 	}
-	//
-	//for {
-	//	select {
-	//	case <-ctx.Done():
-	//		return nil
-	//	case <-t.C:
-	//			...
-	//	}
-	//}
 	return nil
 }
 
