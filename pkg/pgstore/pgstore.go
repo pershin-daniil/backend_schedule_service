@@ -450,7 +450,7 @@ func (s *Store) UsersWithMeetings(ctx context.Context) ([]models.UserNotify, err
 
 	var result []models.UserNotify
 	query := `
-SELECT users.id, m.id, notified, last_name, first_name, start_at FROM users
+SELECT users.id AS user_id, m.id AS meeting_id, notified, last_name, first_name, start_at FROM users
 JOIN meetings m on users.id = m.client
 WHERE now() < start_at + users.notification
 AND NOT notified`

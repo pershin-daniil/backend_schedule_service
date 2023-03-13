@@ -37,7 +37,7 @@ func (t *Telegram) textHandler(ctx tele.Context) error {
 
 func (t *Telegram) startHandler(ctx tele.Context) error {
 	msg := `Вступительная речь
-Предложение продолжить`
+Предложение продолжить ` + fmt.Sprintf("%v", ctx.Sender().ID)
 	// TODO: проверка на существование пользователя
 	parseUserRequest(ctx)
 	return ctx.Send(msg, registration)
