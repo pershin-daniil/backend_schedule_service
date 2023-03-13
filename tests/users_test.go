@@ -45,8 +45,8 @@ type IntegrationTestSuite struct {
 	suite.Suite
 	log      *logrus.Logger
 	store    *pgstore.Store
-	notifier notifier.Notifier
-	app      rest.App
+	notifier *notifier.TelegramNotifier
+	app      *service.ScheduleService
 	handler  *rest.Server
 }
 
@@ -90,7 +90,7 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	err = s.store.Migrate(migrate.Up)
 	s.Require().NoError(err)
 	// s.notifier = notifier.New(s.log, mockTeleBot{})
-	s.app = service.NewScheduleService(s.log, s.store)
+	s.app = service.NewScheduleService(s.log, s.store, s.notifier)
 	s.Require().NoError(err)
 
 	s.handler = rest.New(s.log, s.app, address, version)

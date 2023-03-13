@@ -9,19 +9,19 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
-type Notifier struct {
+type TelegramNotifier struct {
 	log *logrus.Entry
 	bot *tele.Bot
 }
 
-func New(log *logrus.Logger, bot *tele.Bot) *Notifier {
-	return &Notifier{
+func New(log *logrus.Logger, bot *tele.Bot) *TelegramNotifier {
+	return &TelegramNotifier{
 		log: log.WithField("component", "notifier"),
 		bot: bot,
 	}
 }
 
-func (n *Notifier) NotifyTelegram(_ context.Context, msg string, data models.UserNotify) error {
+func (n *TelegramNotifier) Notify(_ context.Context, msg string, data models.UserNotify) error {
 	n.log.Infof("Notification: %v %v", msg, data)
 	chat, err := n.bot.ChatByID(int64(data.UserID))
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
@@ -18,18 +19,31 @@ import (
 )
 
 type Store interface {
+	UserMeetingStore
+	NotificationStore
+}
+
+type UserMeetingStore interface {
 	GetUsers(ctx context.Context) ([]models.User, error)
 	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
 	GetUser(ctx context.Context, id int) (models.User, error)
 	UpdateUser(ctx context.Context, id int, data models.UserRequest) (models.User, error)
 	DeleteUser(ctx context.Context, id int) (models.User, error)
-	ResetTables(ctx context.Context, table []string) error
 	GetMeetings(ctx context.Context) ([]models.Meeting, error)
 	CreateMeeting(ctx context.Context, meeting models.MeetingRequest) (models.Meeting, error)
 	GetMeeting(ctx context.Context, id int) (models.Meeting, error)
 	UpdateMeeting(ctx context.Context, id int, data models.MeetingRequest) (models.Meeting, error)
 	DeleteMeeting(ctx context.Context, id int) (models.Meeting, error)
 	GetUserByPhone(ctx context.Context, phone string) (models.User, error)
+}
+
+type NotificationStore interface {
+	UsersWithMeetings(ctx context.Context) ([]models.UserNotify, error)
+	SwitchNotificationStatus(ctx context.Context, meetingID int) error
+}
+
+type Notifier interface {
+	Notify(_ context.Context, msg string, data models.UserNotify) error
 }
 
 //go:embed private_rsa
@@ -39,15 +53,44 @@ type ScheduleService struct {
 	log        *logrus.Entry
 	store      Store
 	privateKey *rsa.PrivateKey
+	notifier   Notifier
 }
 
-func NewScheduleService(log *logrus.Logger, store Store) *ScheduleService {
+func NewScheduleService(log *logrus.Logger, store Store, notifier Notifier) *ScheduleService {
 	s := ScheduleService{
 		log:        log.WithField("component", "service"),
 		store:      store,
 		privateKey: mustGetPrivateKey(privateSigningKey),
+		notifier:   notifier,
 	}
 	return &s
+}
+
+func (s *ScheduleService) StartNotificationWorker(ctx context.Context) error {
+	t := time.NewTicker(5 * time.Second)
+	go func() {
+		<-ctx.Done()
+		t.Stop()
+	}()
+	for range t.C {
+		usersToNotify, err := s.store.UsersWithMeetings(ctx)
+		if err != nil {
+			return fmt.Errorf("worker send notification faild: %w", err)
+		}
+		for _, user := range usersToNotify {
+			if user.Notified {
+				continue
+			}
+			msg := fmt.Sprintf("У вас тренировка в %s", user.StartAt.String())
+			if err = s.notifier.Notify(ctx, msg, user); err != nil {
+				return fmt.Errorf("worker send notification faild: %w", err)
+			}
+			if err = s.store.SwitchNotificationStatus(ctx, user.MeetingID); err != nil {
+				return fmt.Errorf("worker send notification faild: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *ScheduleService) CreateUser(ctx context.Context, user models.UserRequest) (models.User, error) {
