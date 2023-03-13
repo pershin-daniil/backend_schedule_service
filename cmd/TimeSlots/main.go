@@ -9,8 +9,6 @@ import (
 
 	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
 
-	"github.com/pershin-daniil/TimeSlots/pkg/worker"
-
 	"github.com/pershin-daniil/TimeSlots/internal/telegram"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/service"
@@ -49,13 +47,12 @@ func main() {
 		log.Panic(err)
 	}
 	ntf := notifier.New(log, tgBot)
-	app := service.NewScheduleService(log, store)
+	app := service.NewScheduleService(log, store, ntf)
 	tg, err := telegram.New(log, tgBot, app)
 	if err != nil {
 		log.Panic(err)
 	}
 	server := rest.New(log, app, address, version)
-	notifyUsers := worker.New(log, store, ntf)
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
@@ -79,7 +76,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err = notifyUsers.SendNotificationBeforeTraining(ctx); err != nil {
+		if err = app.StartNotificationWorker(ctx); err != nil {
 			log.Panic(err)
 		}
 	}()
