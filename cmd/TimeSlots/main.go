@@ -84,7 +84,6 @@ func main() {
 		}
 	}()
 	wg.Wait()
-	log.Info("Server stopped")
 }
 
 func lookupEnv(key, defaultValue string) string {

@@ -2,8 +2,11 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	tele "gopkg.in/telebot.v3"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
 
@@ -53,7 +56,7 @@ func (w *Worker) SendNotificationBeforeTraining(ctx context.Context) error {
 				continue
 			}
 			msg := fmt.Sprintf("У вас тренировка в %s", user.StartAt.String())
-			if err = w.notifier.NotifyTelegram(ctx, msg, user); err != nil {
+			if err = w.notifier.NotifyTelegram(ctx, msg, user); err != nil && !errors.Is(err, tele.ErrChatNotFound) {
 				return fmt.Errorf("worker send notification faild: %w", err)
 			}
 			if err = w.store.SwitchNotificationStatus(ctx, user.MeetingID); err != nil {

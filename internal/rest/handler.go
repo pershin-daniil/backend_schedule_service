@@ -128,7 +128,7 @@ func (s *Server) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := s.getClaims(ctx)
-	if id != claims.UserID || claims.Role != models.RoleCoach {
+	if id != claims.UserID {
 		s.writeResponse(w, http.StatusForbidden, nil)
 	}
 	deletedUser, err := s.app.DeleteUser(ctx, id)

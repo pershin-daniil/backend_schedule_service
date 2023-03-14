@@ -117,12 +117,12 @@ func (s *Store) CreateUser(ctx context.Context, user models.UserRequest) (models
 	}
 	var createdUser models.User
 	query := `
-INSERT INTO users (last_name, first_name, phone, email, password_hash, role)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash, role;`
+INSERT INTO users (last_name, first_name, phone, email, password_hash)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, last_name, first_name, phone, COALESCE(email, '') AS email, updated_at, created_at, password_hash;`
 
 	for i := 0; i < retries; i++ {
-		if err = s.db.GetContext(ctx, &createdUser, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash, user.Role); err != nil {
+		if err = s.db.GetContext(ctx, &createdUser, query, user.LastName, user.FirstName, user.Phone, user.Email, user.PasswordHash); err != nil {
 			continue
 		}
 		return createdUser, nil

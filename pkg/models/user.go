@@ -11,7 +11,7 @@ type UserRequest struct {
 	Phone        *string `json:"phone" db:"phone"`
 	Email        *string `json:"email" db:"email"`
 	PasswordHash *string `json:"-" db:"password_hash"`
-	Role         *string `json:"role" db:"role"`
+	Role         *string `json:"-" db:"role"`
 	Password     *string `json:"password" db:"-"`
 }
 
@@ -23,7 +23,7 @@ type User struct {
 	Email        string    `json:"email" db:"email"`
 	PasswordHash string    `json:"-" db:"password_hash"`
 	Role         string    `json:"role" db:"role"`
-	Deleted      bool      `json:"deleted" db:"deleted"`
+	Deleted      bool      `json:"-" db:"deleted"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
 }
