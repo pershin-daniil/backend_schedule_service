@@ -2,7 +2,7 @@ version: "3"
 services:
   db:
     image: postgres:14.2-alpine
-    container_name: timeslots
+    container_name: timeslots_pg
     environment:
       POSTGRES_DB: timeslots
       POSTGRES_USER: postgres
@@ -11,6 +11,24 @@ services:
       - "6431:5432"
     volumes:
       - pg:/var/lib/postgresql/data
+    networks:
+      - jopa-network
+
+  timeslots:
+    build:
+      dockerfile: build/Dockerfile
+      context: .
+    container_name: timeslots_service
+    environment:
+      - PG_DSN=postgres://postgres:secret@db:5432/timeslots?sslmode=disable
+    ports:
+      - "8080:8080"
+    networks:
+      - jopa-network
+    restart: on-failure
 
 volumes:
   pg:
+
+networks:
+  jopa-network:
