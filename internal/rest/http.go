@@ -31,7 +31,7 @@ var publicSigningKey []byte
 
 func New(log *logrus.Logger, app App, address, version string) *Server {
 	s := Server{
-		log:       log.WithField("component", "rest"),
+		log:       log.WithField("module", "rest"),
 		address:   address,
 		version:   version,
 		app:       app,

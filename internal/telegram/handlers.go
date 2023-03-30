@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -62,8 +63,13 @@ func (t *Telegram) registrationHandler(ctx tele.Context) error {
 
 func (t *Telegram) scheduleHandler(ctx tele.Context) error {
 	// TODO: кейс записи на тренировку
-	msg := "Здесь доступное расписание тренера, на которое можно записаться."
-	return ctx.Edit(msg, showMeetings)
+	events := t.cal.Events()
+	var msg strings.Builder
+	msg.WriteString("Здесь доступное расписание тренера, на которое можно записаться.\n\n")
+	for _, event := range events {
+		msg.WriteString(fmt.Sprintf("%s\n", event))
+	}
+	return ctx.Edit(msg.String(), showMeetings)
 }
 
 func (t *Telegram) meetingsHandler(ctx tele.Context) error {

@@ -39,7 +39,7 @@ func New(ctx context.Context, log *logrus.Logger, dsn string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{
-		log: log.WithField("component", "pgstore"),
+		log: log.WithField("module", "pgstore"),
 		db:  db,
 	}, nil
 }

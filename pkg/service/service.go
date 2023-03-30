@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/pershin-daniil/TimeSlots/pkg/pgstore"
 	"golang.org/x/crypto/bcrypt"
@@ -43,7 +42,7 @@ type ScheduleService struct {
 
 func NewScheduleService(log *logrus.Logger, store Store) *ScheduleService {
 	s := ScheduleService{
-		log:        log.WithField("component", "service"),
+		log:        log.WithField("module", "service"),
 		store:      store,
 		privateKey: mustGetPrivateKey(privateSigningKey),
 	}
