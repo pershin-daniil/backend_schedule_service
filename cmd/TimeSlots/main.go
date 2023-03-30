@@ -7,6 +7,8 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/pershin-daniil/TimeSlots/internal/calendar"
+
 	"github.com/pershin-daniil/TimeSlots/pkg/notifier"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/worker"
@@ -49,13 +51,15 @@ func main() {
 		log.Panic(err)
 	}
 	ntf := notifier.New(log, tgBot)
+	cal := calendar.New(ctx, log)
 	app := service.NewScheduleService(log, store)
-	tg, err := telegram.New(log, tgBot, app)
+	tg, err := telegram.New(log, tgBot, app, cal)
 	if err != nil {
 		log.Panic(err)
 	}
 	server := rest.New(log, app, address, version)
 	notifyUsers := worker.New(log, store, ntf)
+
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)

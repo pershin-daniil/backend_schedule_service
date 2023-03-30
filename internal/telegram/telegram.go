@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"github.com/pershin-daniil/TimeSlots/internal/calendar"
 	"time"
 
 	"github.com/pershin-daniil/TimeSlots/pkg/models"
@@ -15,17 +16,23 @@ type Telegram struct {
 	log *logrus.Entry
 	bot *tele.Bot
 	app App
+	cal Calendar
 }
 
 type App interface {
 	CreateUser(ctx context.Context, user models.UserRequest) (models.User, error)
 }
 
-func New(log *logrus.Logger, bot *tele.Bot, app App) (*Telegram, error) {
+type Calendar interface {
+	Events() []models.Event
+}
+
+func New(log *logrus.Logger, bot *tele.Bot, app App, cal *calendar.Calendar) (*Telegram, error) {
 	t := Telegram{
-		log: log.WithField("component", "telegram"),
+		log: log.WithField("module", "telegram"),
 		bot: bot,
 		app: app,
+		cal: cal,
 	}
 	t.initButtons()
 	t.initHandlers()

@@ -16,7 +16,7 @@ type Notifier struct {
 
 func New(log *logrus.Logger, bot *tele.Bot) *Notifier {
 	return &Notifier{
-		log: log.WithField("component", "notifier"),
+		log: log.WithField("module", "notifier"),
 		bot: bot,
 	}
 }
