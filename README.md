@@ -1,6 +1,6 @@
-# TimeSlots
+> # This project is archived and no longer supported. I made a telegram bot based on this idea, the code of which is available [here.](https://github.com/pershin-daniil/TimeSlots)
 
-[![Go test](https://github.com/pershin-daniil/TimeSlots/actions/workflows/go_test.yml/badge.svg)](https://github.com/pershin-daniil/TimeSlots/actions/workflows/go_test.yml)
+# TimeSlots
 
 >TimeSlots is a service that provides a way to schedule appointments, managing work schedules, and much more.
 
@@ -19,7 +19,7 @@ go build
 To start service.
 
 ```shell
-make up
+make run
 ```
 
 To start linter.
